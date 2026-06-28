@@ -1,0 +1,8 @@
+{
+  "name": "herd-mentality",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": { "start": "node server.js", "test": "node test-e2e.mjs" },
+  "engines": { "node": ">=18" },
+  "dependencies": { "ws": "^8.18.0" }
+}

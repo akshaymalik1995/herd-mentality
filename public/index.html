@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Herd Mentality</title>
+<style>
+  :root { --bg:#0f1226; --card:#1b1f3b; --ink:#f4f1e8; --moo:#ff7eb6; --grass:#7bd88f; --line:#33386b; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--ink); min-height:100vh; }
+  .wrap { max-width:760px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { font-size:clamp(28px,7vw,48px); margin:.2em 0; letter-spacing:.5px; }
+  h1 .moo { color:var(--moo); }
+  .sub { opacity:.7; margin-bottom:24px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:20px; margin:14px 0; }
+  button { font:inherit; font-weight:600; border:0; border-radius:12px; padding:14px 20px; background:var(--moo); color:#2a0d1c; cursor:pointer; width:100%; margin-top:8px; }
+  button.ghost { background:transparent; color:var(--ink); border:1px solid var(--line); }
+  button:active { transform:translateY(1px); }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  button.merge { background:transparent; color:var(--grass); border:1.5px solid var(--grass); }
+  input { font:inherit; width:100%; padding:14px 16px; border-radius:12px; border:1px solid var(--line); background:#0d1030; color:var(--ink); margin-top:8px; text-transform:none; }
+  .code { font-size:clamp(40px,14vw,84px); font-weight:800; letter-spacing:.18em; color:var(--grass); text-align:center; margin:8px 0; }
+  .q { font-size:clamp(22px,5.5vw,34px); font-weight:700; line-height:1.25; }
+  .pill { display:inline-block; padding:4px 12px; border-radius:999px; background:#0d1030; border:1px solid var(--line); font-size:14px; margin:3px 4px 0 0; }
+  .row { display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--line); }
+  .row:last-child { border-bottom:0; }
+  .row .name { flex:1; }
+  .score { font-weight:800; font-size:20px; }
+  .cow { font-size:20px; }
+  .grp { padding:10px 0; border-bottom:1px solid var(--line); }
+  .grp b { color:var(--grass); }
+  .grp.maj b { color:var(--moo); }
+  .merge-card { cursor:pointer; border-radius:10px; padding-left:8px; transition:outline .1s; }
+  .merge-card.sel { outline:2px solid var(--moo); background:#0d1030; }
+  .muted { opacity:.6; }
+  .big { font-size:clamp(30px,8vw,52px); font-weight:800; color:var(--moo); text-align:center; }
+  .center { text-align:center; }
+  .err { color:#ff8a8a; min-height:1.2em; }
+  .tick { color:var(--grass); }
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script>
+const app = document.getElementById("app");
+let ws, state = null, role = null, selected = new Set();
+const params = new URLSearchParams(location.search);
+
+function connect(then) {
+  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host);
+  ws.onopen = then;
+  ws.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    if (m.t === "error") { renderError(m.msg); return; }
+    if (m.t === "state") { state = m; role = m.role; render(); }
+  };
+  ws.onclose = () => { app.innerHTML = '<div class="card center">Disconnected. <a href="/" style="color:var(--moo)">Reload</a></div>'; };
+}
+const sendMsg = (o) => ws.send(JSON.stringify(o));
+
+// ---------- landing ----------
+function landing() {
+  app.innerHTML = `
+    <h1>Herd <span class="moo">Mentality</span> 🐄</h1>
+    <p class="sub">Match the herd. Be the odd one out and you’re stuck with the Pink Cow.</p>
+    <div class="card">
+      <h3>Join a game</h3>
+      <input id="name" placeholder="Your name" maxlength="20" autocomplete="off" />
+      <input id="code" placeholder="Room code" maxlength="4" autocomplete="off" style="text-transform:uppercase" />
+      <p class="err" id="err"></p>
+      <button id="joinBtn">Join</button>
+    </div>
+    <div class="card">
+      <h3>Host on the big screen</h3>
+      <p class="muted">Open this on a TV/laptop so everyone can see the question and scores.</p>
+      <button class="ghost" id="hostBtn">Create a room</button>
+    </div>`;
+  document.getElementById("joinBtn").onclick = () => {
+    const name = document.getElementById("name").value.trim();
+    const code = document.getElementById("code").value.trim().toUpperCase();
+    if (!name) return renderError("Enter your name.");
+    if (code.length !== 4) return renderError("Code is 4 letters.");
+    connect(() => sendMsg({ t: "join", name, code }));
+  };
+  document.getElementById("hostBtn").onclick = () => connect(() => sendMsg({ t: "host" }));
+}
+function renderError(msg) { const e = document.getElementById("err"); if (e) e.textContent = msg; }
+
+// ---------- render dispatch ----------
+function render() {
+  if (!state) return;
+  if (state.phase !== "review") selected.clear(); // drop stale selections between rounds
+  if (role === "host") renderHost();
+  else renderPlayer();
+}
+
+// ---------- host ----------
+function renderHost() {
+  const s = state;
+  let body = "";
+  if (s.phase === "lobby") {
+    body = `
+      <div class="card center">
+        <p class="muted">Players join at this site and enter the code:</p>
+        <div class="code">${s.code}</div>
+        <p>${s.total} player${s.total === 1 ? "" : "s"} in</p>
+        <div>${s.players.map(p => `<span class="pill">${esc(p.name)}</span>`).join("")}</div>
+      </div>
+      <button id="start" ${s.total < 1 ? "disabled" : ""}>Start game</button>`;
+  } else if (s.phase === "asking") {
+    body = `
+      <div class="card"><div class="q">${esc(s.question)}</div></div>
+      <div class="card">
+        <p>${s.answeredCount} / ${s.total} answered</p>
+        <div>${s.players.map(p => `<span class="pill">${p.answered ? "✅ " : "… "}${esc(p.name)}</span>`).join("")}</div>
+      </div>
+      <button id="reveal" ${s.answeredCount < 1 ? "disabled" : ""}>Reveal answers</button>`;
+  } else if (s.phase === "review") {
+    body = `
+      <div class="card"><div class="q">${esc(s.question)}</div></div>
+      <div class="card">${s.review.map(b => `
+        <div class="grp merge-card ${selected.has(b.id) ? "sel" : ""}" data-id="${b.id}">
+          <b>${esc(b.label)}</b> <span class="muted">×${b.count}</span><br>
+          <span class="muted">${b.names.map(esc).join(", ")}</span>
+        </div>`).join("")}</div>
+      ${selected.size >= 2 ? `<button class="merge" id="mergeSel">Merge ${selected.size} answers</button>` : ""}
+      <button id="score">Score this round</button>
+      <button class="ghost" id="regroup">Reset groups</button>`;
+  } else if (s.phase === "reveal" || s.phase === "won") {
+    body = revealBlock(s) + scoreCard(s) +
+      (s.phase === "won"
+        ? `<div class="card center"><div class="big">🏆 ${esc(s.winner)} wins!</div></div><button id="restart">New game</button>`
+        : `<button id="next">Next question</button>`);
+  }
+  app.innerHTML = `<h1>Herd <span class="moo">Mentality</span> 🐄</h1>${body}`;
+  bind("start", { t: "start" }); bind("reveal", { t: "reveal" });
+  bind("next", { t: "next" }); bind("restart", { t: "restart" });
+  bind("score", { t: "score" });
+  const regroup = document.getElementById("regroup");
+  if (regroup) regroup.onclick = () => { selected.clear(); sendMsg({ t: "regroup" }); };
+  const mergeSel = document.getElementById("mergeSel");
+  if (mergeSel) mergeSel.onclick = () => { sendMsg({ t: "merge", ids: [...selected] }); selected.clear(); };
+  document.querySelectorAll(".merge-card").forEach((el) => {
+    el.onclick = () => {
+      const id = Number(el.dataset.id);
+      selected.has(id) ? selected.delete(id) : selected.add(id); // toggle
+      render();
+    };
+  });
+}
+
+// ---------- player ----------
+function renderPlayer() {
+  const s = state;
+  const head = `<h1>Herd <span class="moo">Mentality</span> 🐄</h1>
+    <div class="card center"><b>${esc(s.you)}</b> · ${s.score} pt${s.score === 1 ? "" : "s"} ${s.cow ? "· 🐄 Pink Cow" : ""}<br><span class="muted">Room ${s.code}</span></div>`;
+  let body = "";
+  if (s.phase === "lobby") {
+    body = `<div class="card center"><p>You’re in! 🎉</p><p class="muted">Waiting for the host to start…</p></div>`;
+  } else if (s.phase === "asking") {
+    if (s.answered) {
+      body = `<div class="card"><div class="q">${esc(s.question)}</div></div>
+        <div class="card center tick">Answer locked in ✅<br><span class="muted">Waiting for the herd…</span></div>`;
+    } else {
+      body = `<div class="card"><div class="q">${esc(s.question)}</div>
+        <input id="ans" placeholder="Your answer" maxlength="60" autocomplete="off" />
+        <button id="submit">Submit</button></div>`;
+    }
+  } else if (s.phase === "review") {
+    body = `<div class="card"><div class="q">${esc(s.question)}</div></div>
+      <div class="card center muted">Host is checking the answers… 🧐</div>`;
+  } else if (s.phase === "reveal" || s.phase === "won") {
+    body = revealBlock(s) + scoreCard(s) +
+      (s.phase === "won" ? `<div class="card center"><div class="big">🏆 ${esc(s.winner)} wins!</div></div>` : `<div class="card center muted">Waiting for the next question…</div>`);
+  }
+  app.innerHTML = head + body;
+  const submit = document.getElementById("submit");
+  if (submit) {
+    const inp = document.getElementById("ans");
+    const go = () => { const text = inp.value.trim(); if (text) sendMsg({ t: "answer", text }); };
+    submit.onclick = go;
+    inp.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+    inp.focus();
+  }
+}
+
+// ---------- shared blocks ----------
+function revealBlock(s) {
+  if (!s.reveal) return "";
+  const r = s.reveal;
+  const maj = new Set(r.majority.map(x => x.toLowerCase()));
+  return `<div class="card"><div class="q">${esc(r.question)}</div>
+    ${r.majority.length ? `<p class="muted">Herd answer${r.majority.length > 1 ? "s" : ""}: <b style="color:var(--moo)">${r.majority.map(esc).join(", ")}</b></p>` : `<p class="muted">No agreement — nobody scores!</p>`}
+    ${r.groups.map(g => `<div class="grp ${maj.has(g.answer.toLowerCase()) ? "maj" : ""}">
+      <b>${esc(g.answer)}</b> <span class="muted">×${g.count}</span><br>
+      <span class="muted">${g.names.map(esc).join(", ")}</span></div>`).join("")}
+  </div>`;
+}
+function scoreCard(s) {
+  return `<div class="card"><h3>Scores</h3>${s.scoreboard.map(p => `
+    <div class="row"><span class="name">${esc(p.name)}</span>
+      <span class="cow">${p.cow ? "🐄" : ""}</span>
+      <span class="score">${p.score}</span></div>`).join("")}
+    <p class="muted center" style="margin-top:10px">First to 8 wins — but not while holding the cow.</p></div>`;
+}
+function bind(id, msg) { const el = document.getElementById(id); if (el) el.onclick = () => sendMsg(msg); }
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+landing();
+</script>
+</body>
+</html>
