@@ -316,6 +316,20 @@ async function main() {
     ok("missing room -> resume error", z2.errors.some((e) => e.resume));
   }
 
+  console.log("\n[22] Round counter");
+  {
+    const [host, code] = await createRoom();
+    await join(code, "A");
+    s(host, { t: "start" }); await settle();
+    ok("start -> round 1", last(host).round === 1);
+    s(host, { t: "skip" }); await settle();
+    ok("skip keeps the round number", last(host).round === 1);
+    s(host, { t: "next" }); await settle();
+    ok("next -> round 2", last(host).round === 2);
+    s(host, { t: "restart" }); await settle();
+    ok("restart -> round 0", last(host).round === 0);
+  }
+
   console.log(`\n${fail === 0 ? "ALL PASS ✅" : "FAILURES ❌"}  (${pass} passed, ${fail} failed)`);
   srv.kill();
   process.exit(fail === 0 ? 0 : 1);

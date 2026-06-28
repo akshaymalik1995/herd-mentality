@@ -39,6 +39,7 @@ function makeRoom() {
     code, leader: null, phase: "lobby",
     players: new Map(), // id -> {id,name,ws,score,cow}
     question: null, answers: new Map(), // id -> text
+    round: 0, // questions presented this game
     buckets: [], bucketSeq: 0, // host-mergeable answer groups during review
     deck: shuffle([...QUESTIONS.keys()]), deckPos: 0,
     lastReveal: null,
@@ -109,6 +110,7 @@ function playerView(room, p) {
     role: "player", isLeader, code: room.code, phase: room.phase, you: p.name, youEmoji: p.emoji, token: p.token,
     score: p.score, cow: p.cow, answered: room.answers.has(p.id),
     question: room.phase === "lobby" ? null : room.question,
+    round: room.round,
     players: [...room.players.values()].map((x) => ({ name: x.name, emoji: x.emoji, answered: room.answers.has(x.id) })),
     answeredCount: room.answers.size, total: room.players.size,
     // everyone sees the grouped answers during review (so the whole group can argue merges)
@@ -231,6 +233,7 @@ function handle(ws, m) {
     if (room.players.size < 1) return;
     room.question = drawQuestion(room);
     room.answers.clear();
+    room.round = m.t === "start" ? 1 : room.round + 1; // skip doesn't advance the count
     room.phase = "asking";
     broadcast(room);
   } else if (m.t === "skip") {
@@ -263,7 +266,7 @@ function handle(ws, m) {
     broadcast(room);
   } else if (m.t === "restart") {
     for (const p of room.players.values()) { p.score = 0; p.cow = false; }
-    room.phase = "lobby"; room.question = null; room.answers.clear(); room.winner = null; room.lastReveal = null;
+    room.phase = "lobby"; room.question = null; room.answers.clear(); room.winner = null; room.lastReveal = null; room.round = 0;
     broadcast(room);
   }
 }

@@ -67,6 +67,7 @@ async function main() {
   ok("Start button present for leader", !!$(host, "start"));
   const code = host.window.document.querySelector(".code").textContent;
   ok("4-letter room code shown", /^[A-Z]{4}$/.test(code));
+  ok("lobby has share + tap-to-copy affordances", !!$(host, "shareBtn") && !!$(host, "roomCode"));
 
   console.log("\n[B] Others join (incl. a duplicate name)");
   const bob = tab(); await joinGame(bob, "Bob", code);
@@ -80,6 +81,7 @@ async function main() {
   click(host, "start");
   await waitForEl(host, "ans"); await waitForEl(bob, "ans"); await waitForEl(dup, "ans");
   ok("everyone gets an answer box", !!$(host, "ans") && !!$(bob, "ans") && !!$(dup, "ans"));
+  ok("round counter shows in header", text(host).includes("Q1"));
   await answer(bob, "pizza");
   await waitForText(bob, "Answer locked in");
   await waitForText(bob, "answered");
@@ -101,6 +103,7 @@ async function main() {
   await waitForText(bob, "Scores");
   ok("herd answer (pizza) reported", text(host).toLowerCase().includes("pizza"));
   ok("gainers highlighted with +N (juice)", !!host.window.document.querySelector(".row.gain") && text(host).includes("+1"));
+  ok("pink-cow banner names the holder", text(host).includes("🐮") && text(host).toLowerCase().includes("can’t win while holding"));
   ok("scoreboard shows players with avatars", hasAvatar(text(bob), "Bob") && text(bob).includes("Akshay"));
   ok("leader can advance to next question", !!$(host, "next"));
   ok("non-leader waits for next", text(bob).toLowerCase().includes("waiting for the next"));

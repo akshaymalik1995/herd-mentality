@@ -31,7 +31,9 @@
   .plusone { position:absolute; right:48px; top:7px; color:var(--grass); font-weight:800; pointer-events:none; animation: floatUp 1s ease-out forwards; }
   @keyframes cardIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
   .anim-in { animation: cardIn .3s cubic-bezier(.22,1,.36,1) both; }
-  #helpBtn { position:fixed; top:12px; right:12px; z-index:40; width:36px; height:36px; padding:0; margin:0; border-radius:50%; background:#0d1030; color:var(--ink); border:1px solid var(--line); font-size:17px; font-weight:800; cursor:pointer; }
+  #helpBtn { position:fixed; top:12px; right:12px; z-index:40; width:44px; height:44px; padding:0; margin:0; border-radius:50%; background:#0d1030; color:var(--ink); border:1px solid var(--line); font-size:18px; font-weight:800; cursor:pointer; }
+  .code { cursor:pointer; }
+  .code:active { transform:scale(.98); }
   .overlay { position:fixed; inset:0; background:rgba(8,10,25,.74); display:flex; align-items:flex-end; justify-content:center; z-index:100; }
   .overlay[hidden] { display:none; }
   .sheet { background:var(--card); border:1px solid var(--line); border-top:3px solid var(--moo); border-radius:18px 18px 0 0; padding:26px 20px 34px; width:100%; max-width:760px; max-height:88vh; overflow:auto; position:relative; animation: sheetUp .26s cubic-bezier(.22,1,.36,1); }
@@ -50,7 +52,8 @@
   .grp.maj b { color:var(--moo); }
   .merge-card { cursor:pointer; border-radius:10px; padding-left:8px; transition:outline .1s; }
   .merge-card.sel { outline:2px solid var(--moo); background:#0d1030; }
-  .muted { opacity:.6; }
+  .muted { opacity:.72; }
+  button:focus-visible, a:focus-visible, input:focus-visible, [role="button"]:focus-visible { outline:2px solid var(--moo); outline-offset:2px; }
   .big { font-size:clamp(30px,8vw,52px); font-weight:800; color:var(--moo); text-align:center; }
   .center { text-align:center; }
   .err { color:#ff8a8a; min-height:1.2em; }
@@ -102,6 +105,7 @@ function connect(then) {
 }
 const sendMsg = (o) => ws.send(JSON.stringify(o));
 function leaveGame() { clearSession(); try { sendMsg({ t: "leave" }); ws.close(); } catch {} state = null; role = null; landing(); }
+function copyText(t) { return (navigator.clipboard && navigator.clipboard.writeText) ? navigator.clipboard.writeText(t) : Promise.resolve(); }
 
 // ---------- landing ----------
 let landName = ""; // keep the typed name when switching tabs
@@ -127,6 +131,7 @@ function landing(tab = "join", notice = "") {
   document.getElementById("tabJoin").onclick = () => switchTo("join");
   document.getElementById("tabCreate").onclick = () => switchTo("create");
   document.getElementById("howto").onclick = (e) => { e.preventDefault(); openRules(); };
+  if (join) { const rp = new URLSearchParams(location.search).get("room"); if (rp) document.getElementById("code").value = rp.toUpperCase().slice(0, 4); } // prefill from a shared ?room= link
   document.getElementById("go").onclick = () => {
     const name = nameEl.value.trim();
     if (!name) return renderError("Enter your name first.");
@@ -149,14 +154,16 @@ function render() {
   const s = state, lead = s.isLeader;
   const phaseChanged = lastPhase !== s.phase; // drives crossfade + one-time stagger
   const head = `<h1>Herd <span class="moo">Mentality</span> 🐄</h1>
-    <div class="card center"><b>${s.youEmoji} ${esc(s.you)}</b>${lead ? " 👑" : ""} · ${s.score} pt${s.score === 1 ? "" : "s"} ${s.cow ? "· 🐄 Pink Cow" : ""}<br><span class="muted">Room ${s.code}</span> · <a href="#" id="leave" style="color:var(--moo)">Leave</a></div>`;
+    <div class="card center"><b>${s.youEmoji} ${esc(s.you)}</b>${lead ? " 👑" : ""} · ${s.score} pt${s.score === 1 ? "" : "s"} ${s.cow ? "· 🐄 Pink Cow" : ""}<br><span class="muted">Room ${s.code}${s.round ? ` · Q${s.round}` : ""}</span> · <a href="#" id="leave" style="color:var(--moo)">Leave</a></div>`;
   let body = "";
 
   if (s.phase === "lobby") {
     body = `<div class="card center">
         <p class="muted">Share this code so friends can join:</p>
-        <div class="code">${s.code}</div>
-        <div>${s.players.map(p => `<span class="pill">${p.emoji} ${esc(p.name)}</span>`).join("")}</div>
+        <div class="code" id="roomCode" role="button" tabindex="0" title="Tap to copy">${s.code}</div>
+        <button class="ghost" id="shareBtn" style="width:auto;padding:10px 22px;margin:4px auto 0">📤 Share invite</button>
+        <div class="muted" id="copyMsg" aria-live="polite" style="min-height:1.2em;margin-top:6px"></div>
+        <div style="margin-top:8px">${s.players.map(p => `<span class="pill">${p.emoji} ${esc(p.name)}</span>`).join("")} <span class="muted">· ${s.total} in</span></div>
       </div>` +
       (lead ? `<button id="start">Start game</button>`
             : `<div class="card center muted">Waiting for the host to start…</div>`);
@@ -168,11 +175,11 @@ function render() {
       : `${s.answeredCount} / ${s.total} answered…`;
     body = s.answered
       ? `<div class="card"><div class="q">${esc(s.question)}</div></div>
-         <div class="card center tick">Answer locked in ✅<br><span class="muted">${waitMsg}</span></div>`
+         <div class="card center tick">Answer locked in ✅<br><span class="muted" aria-live="polite">${waitMsg}</span></div>`
       : `<div class="card"><div class="q">${esc(s.question)}</div>
          <input id="ans" placeholder="Your answer" maxlength="60" autocomplete="off" />
          <button id="submit">Submit</button></div>`;
-    if (lead) body += `<div class="card"><p class="muted">${s.answeredCount} / ${s.total} answered</p>
+    if (lead) body += `<div class="card"><p class="muted" aria-live="polite">${s.answeredCount} / ${s.total} answered</p>
         <div>${s.players.map(p => `<span class="pill">${p.emoji} ${esc(p.name)}${p.answered ? " ✅" : ""}</span>`).join("")}</div></div>
       <button id="reveal" ${s.answeredCount < 1 ? "disabled" : ""}>Reveal answers</button>
       <button class="ghost" id="skip">Skip this question</button>`;
@@ -183,7 +190,7 @@ function render() {
       const delay = phaseChanged ? `style="animation-delay:${i * 45}ms"` : "";
       const inner = `<b>${esc(b.label)}</b> <span class="muted">×${b.count}</span><br><span class="muted">${b.names.map(esc).join(", ")}</span>`;
       return lead
-        ? `<div class="grp merge-card ${selected.has(b.id) ? "sel" : ""} ${anim}" data-id="${b.id}" ${delay}>${inner}</div>`
+        ? `<div class="grp merge-card ${selected.has(b.id) ? "sel" : ""} ${anim}" data-id="${b.id}" role="button" tabindex="0" aria-pressed="${selected.has(b.id)}" ${delay}>${inner}</div>`
         : `<div class="grp ${anim}" ${delay}>${inner}</div>`;
     }).join("");
     body = `<div class="card"><div class="q">${esc(s.question)}</div></div>
@@ -199,7 +206,9 @@ function render() {
     const herd = s.reveal && s.reveal.majority.length
       ? `<div class="card center">Herd answer: <b style="color:var(--moo)">${s.reveal.majority.map(esc).join(", ")}</b></div>`
       : `<div class="card center muted">No agreement — nobody scored this round.</div>`;
-    body = herd + scoreCard(s);
+    const cowP = s.scoreboard.find(p => p.cow);
+    const cowBanner = cowP ? `<div class="card center" style="border-color:var(--moo)">🐮 <b>${esc(cowP.name)}</b> has the Pink Cow — can’t win while holding it.</div>` : "";
+    body = herd + cowBanner + scoreCard(s);
     if (s.phase === "won") body += `<div class="card center"><div class="big">🏆 ${esc(s.winner)} wins!</div></div>` + (lead ? `<button id="restart">New game</button>` : "");
     else body += lead ? `<button id="next">Next question</button>` : `<div class="card center muted">Waiting for the next question…</div>`;
   }
@@ -236,7 +245,24 @@ function render() {
       selected.has(id) ? selected.delete(id) : selected.add(id); // toggle
       render();
     };
+    el.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); el.click(); } };
   });
+
+  // lobby: copy code / share invite
+  const roomCode = document.getElementById("roomCode");
+  if (roomCode) {
+    const code = state.code, copyMsg = document.getElementById("copyMsg");
+    const flash = (m) => { if (copyMsg) { copyMsg.textContent = m; setTimeout(() => { if (copyMsg) copyMsg.textContent = ""; }, 1800); } };
+    const copyCode = () => copyText(code).then(() => flash("Code copied ✓"));
+    roomCode.onclick = copyCode;
+    roomCode.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); copyCode(); } };
+    const shareBtn = document.getElementById("shareBtn");
+    if (shareBtn) shareBtn.onclick = () => {
+      const url = `${location.origin}/?room=${code}`, text = `Join my Herd Mentality game! Code: ${code}`;
+      if (navigator.share) navigator.share({ title: "Herd Mentality 🐄", text, url }).catch(() => {});
+      else copyText(`${text}  ${url}`).then(() => flash("Invite link copied ✓"));
+    };
+  }
 
   if (phaseChanged && app.animate) app.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: "ease-out" }); // gentle crossfade between phases
   if (s.phase === "reveal" || s.phase === "won") { flipScoreboard(s); juice(s); } // Tier 2 re-sort, then Tier 1 juice
