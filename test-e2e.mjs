@@ -231,6 +231,19 @@ async function main() {
     ok("three Akshays -> unique labels", JSON.stringify(names) === JSON.stringify(["Akshay", "Akshay (2)", "Akshay (3)"]));
   }
 
+  console.log("\n[16] Auto-reveal when everyone has answered");
+  {
+    const [host, code] = await createRoom();
+    const a = await join(code, "A"), b = await join(code, "B");
+    s(host, { t: "next" }); await settle();
+    s(host, { t: "answer", text: "go" }); s(a, { t: "answer", text: "go" }); await settle();
+    ok("not all in yet -> still asking", last(host).phase === "asking");
+    s(b, { t: "answer", text: "go" }); await settle(); // last answer
+    ok("all answered -> auto-advances to review (no reveal sent)", last(host).phase === "review");
+    s(host, { t: "score" }); await settle();
+    ok("scoring still works after auto-reveal", score(host, "A").score === 1);
+  }
+
   console.log(`\n${fail === 0 ? "ALL PASS ✅" : "FAILURES ❌"}  (${pass} passed, ${fail} failed)`);
   srv.kill();
   process.exit(fail === 0 ? 0 : 1);

@@ -18,6 +18,8 @@
   button:active { transform:translateY(1px); }
   button:disabled { opacity:.4; cursor:not-allowed; }
   button.merge { background:transparent; color:var(--grass); border:1.5px solid var(--grass); }
+  .tabs { display:flex; gap:8px; margin-bottom:14px; }
+  .tabs button { flex:1; margin:0; }
   input { font:inherit; width:100%; padding:14px 16px; border-radius:12px; border:1px solid var(--line); background:#0d1030; color:var(--ink); margin-top:8px; text-transform:none; }
   .code { font-size:clamp(40px,14vw,84px); font-weight:800; letter-spacing:.18em; color:var(--grass); text-align:center; margin:8px 0; }
   .q { font-size:clamp(22px,5.5vw,34px); font-weight:700; line-height:1.25; }
@@ -59,30 +61,37 @@ function connect(then) {
 const sendMsg = (o) => ws.send(JSON.stringify(o));
 
 // ---------- landing ----------
-function landing() {
+let landName = ""; // keep the typed name when switching tabs
+function landing(tab = "join") {
+  const join = tab === "join";
   app.innerHTML = `
     <h1>Herd <span class="moo">Mentality</span> 🐄</h1>
     <p class="sub">Everyone answers the same question — match the herd to score. Be the odd one out and you’re stuck with the Pink Cow.</p>
-    <div class="card">
-      <input id="name" placeholder="Your name" maxlength="20" autocomplete="off" />
-      <p class="err" id="err"></p>
-      <button id="createBtn">Start a new game</button>
+    <div class="tabs">
+      <button id="tabJoin" class="${join ? "" : "ghost"}">Join a game</button>
+      <button id="tabCreate" class="${join ? "ghost" : ""}">Create a game</button>
     </div>
     <div class="card">
-      <h3>Join with a code</h3>
-      <input id="code" placeholder="Room code" maxlength="4" autocomplete="off" style="text-transform:uppercase" />
-      <button class="ghost" id="joinBtn">Join game</button>
+      <input id="name" placeholder="Your name" maxlength="20" autocomplete="off" />
+      ${join ? `<input id="code" placeholder="Room code" maxlength="4" autocomplete="off" style="text-transform:uppercase" />` : ""}
+      <p class="err" id="err"></p>
+      <button id="go">${join ? "Join game" : "Create game"}</button>
     </div>`;
-  const nameOf = () => document.getElementById("name").value.trim();
-  document.getElementById("createBtn").onclick = () => {
-    if (!nameOf()) return renderError("Enter your name first.");
-    connect(() => sendMsg({ t: "create", name: nameOf() }));
-  };
-  document.getElementById("joinBtn").onclick = () => {
-    const code = document.getElementById("code").value.trim().toUpperCase();
-    if (!nameOf()) return renderError("Enter your name first.");
-    if (code.length !== 4) return renderError("Code is 4 letters.");
-    connect(() => sendMsg({ t: "join", name: nameOf(), code }));
+  const nameEl = document.getElementById("name");
+  nameEl.value = landName;
+  const switchTo = (t) => { landName = nameEl.value; landing(t); };
+  document.getElementById("tabJoin").onclick = () => switchTo("join");
+  document.getElementById("tabCreate").onclick = () => switchTo("create");
+  document.getElementById("go").onclick = () => {
+    const name = nameEl.value.trim();
+    if (!name) return renderError("Enter your name first.");
+    if (join) {
+      const code = document.getElementById("code").value.trim().toUpperCase();
+      if (code.length !== 4) return renderError("Code is 4 letters.");
+      connect(() => sendMsg({ t: "join", name, code }));
+    } else {
+      connect(() => sendMsg({ t: "create", name }));
+    }
   };
 }
 function renderError(msg) { const e = document.getElementById("err"); if (e) e.textContent = msg; }

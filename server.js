@@ -142,9 +142,20 @@ wss.on("connection", (ws) => {
     room.answers.delete(meta.id);
     if (room.players.size === 0) { rooms.delete(room.code); return; } // last one out
     if (room.leader === meta.id) room.leader = room.players.keys().next().value; // hand off control
+    maybeAutoReveal(room); // an AFK player leaving may mean everyone left has answered
     broadcast(room);
   });
 });
+
+// Once everyone has answered, jump straight to the review/scoring step (no need
+// for the leader to press Reveal). The manual Reveal button still covers the case
+// where someone never answers.
+function maybeAutoReveal(room) {
+  if (room.phase === "asking" && room.players.size > 0 && room.answers.size >= room.players.size) {
+    buildBuckets(room);
+    room.phase = "review";
+  }
+}
 
 function addPlayer(room, ws, rawName) {
   const base = (rawName || "").trim().slice(0, 20) || "Player";
@@ -182,6 +193,7 @@ function handle(ws, m) {
   if (m.t === "answer" && room.phase === "asking") {
     const text = (m.text || "").trim().slice(0, 60);
     if (text) room.answers.set(meta.id, text);
+    maybeAutoReveal(room);
     broadcast(room);
     return;
   }

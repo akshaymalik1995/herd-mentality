@@ -42,14 +42,18 @@ async function waitForText(dom, sub, ms = 4000) {
   throw new Error(`timeout waiting for "${sub}". body:\n${text(dom)}`);
 }
 async function answer(dom, ans) { await waitForEl(dom, "ans"); setVal(dom, "ans", ans); click(dom, "submit"); }
+async function createGame(dom, name) { await waitForEl(dom, "tabCreate"); click(dom, "tabCreate"); await waitForEl(dom, "go"); setVal(dom, "name", name); click(dom, "go"); }
+async function joinGame(dom, name, code) { await waitForEl(dom, "tabJoin"); click(dom, "tabJoin"); await waitForEl(dom, "go"); setVal(dom, "name", name); setVal(dom, "code", code); click(dom, "go"); }
 
 async function main() {
   await sleep(800); // server boot
 
-  console.log("\n[A] Landing -> create -> lobby");
+  console.log("\n[A] Landing tabs -> create -> lobby");
   const host = tab();
-  await waitForEl(host, "createBtn");
-  setVal(host, "name", "Akshay"); click(host, "createBtn");
+  await waitForEl(host, "tabJoin");
+  ok("two tabs present (Join + Create)", !!$(host, "tabJoin") && !!$(host, "tabCreate"));
+  ok("Join tab is default (has code field)", !!$(host, "code"));
+  await createGame(host, "Akshay");
   await waitForEl(host, "start");
   ok("leader sees crown", text(host).includes("👑"));
   ok("leader sees own avatar next to name", hasAvatar(text(host), "Akshay"));
@@ -58,10 +62,8 @@ async function main() {
   ok("4-letter room code shown", /^[A-Z]{4}$/.test(code));
 
   console.log("\n[B] Others join (incl. a duplicate name)");
-  const bob = tab(); await waitForEl(bob, "joinBtn");
-  setVal(bob, "name", "Bob"); setVal(bob, "code", code); click(bob, "joinBtn");
-  const dup = tab(); await waitForEl(dup, "joinBtn");
-  setVal(dup, "name", "Akshay"); setVal(dup, "code", code); click(dup, "joinBtn"); // same name as host
+  const bob = tab(); await joinGame(bob, "Bob", code);
+  const dup = tab(); await joinGame(dup, "Akshay", code); // same name as host
   await waitForText(host, "Akshay (2)");
   ok("duplicate name auto-suffixed in lobby", text(host).includes("Akshay (2)"));
   ok("non-leader sees waiting message, no Start", text(bob).toLowerCase().includes("waiting for the host") && !$(bob, "start"));
@@ -75,22 +77,15 @@ async function main() {
   await waitForText(bob, "answered");
   ok("answered player sees live count (not a dead end)", /\d \/ 3 answered/.test(text(bob)));
 
-  console.log("\n[D] THE BUG: everyone in -> clear next-step message");
+  console.log("\n[D] Everyone answered -> AUTO reveal (no manual click)");
   await answer(host, "pizza");
-  await answer(dup, "pasta");
-  await waitForText(bob, "waiting for the host to reveal");
-  ok("non-leader: 'waiting for the host to reveal'", text(bob).toLowerCase().includes("waiting for the host to reveal"));
-  ok("non-leader: NOT stuck on 'Waiting for the herd'", !text(bob).includes("Waiting for the herd"));
-  await waitForEl(host, "reveal");
-  ok("leader prompted to reveal", text(host).includes("hit Reveal"));
-  ok("leader Reveal button enabled (all answered)", $(host, "reveal") && !$(host, "reveal").disabled);
-
-  console.log("\n[E] Reveal -> review (leader merges, others wait)");
-  click(host, "reveal");
+  await answer(dup, "pasta"); // last answer triggers auto-reveal
   await waitForEl(host, "score");
-  ok("leader sees Score + answer cards", !!$(host, "score") && host.window.document.querySelectorAll(".merge-card").length >= 1);
+  ok("auto-advances to review once everyone answered", !!$(host, "score"));
+  ok("leader sees answer cards to merge/score", host.window.document.querySelectorAll(".merge-card").length >= 1);
   await waitForText(bob, "checking the answers");
   ok("non-leader sees 'checking the answers'", text(bob).toLowerCase().includes("checking the answers"));
+  ok("non-leader never stuck on 'Waiting for the herd'", !text(bob).includes("Waiting for the herd"));
   click(host, "score");
 
   console.log("\n[F] Score -> scoreboard visible to all");
