@@ -106,9 +106,13 @@ function render() {
             : `<div class="card center muted">Waiting for the host to start…</div>`);
 
   } else if (s.phase === "asking") {
+    const allIn = s.answeredCount >= s.total;
+    const waitMsg = allIn
+      ? (lead ? "Everyone’s in — hit Reveal 👇" : "Everyone’s in — waiting for the host to reveal…")
+      : `${s.answeredCount} / ${s.total} answered…`;
     body = s.answered
       ? `<div class="card"><div class="q">${esc(s.question)}</div></div>
-         <div class="card center tick">Answer locked in ✅<br><span class="muted">Waiting for the herd…</span></div>`
+         <div class="card center tick">Answer locked in ✅<br><span class="muted">${waitMsg}</span></div>`
       : `<div class="card"><div class="q">${esc(s.question)}</div>
          <input id="ans" placeholder="Your answer" maxlength="60" autocomplete="off" />
          <button id="submit">Submit</button></div>`;

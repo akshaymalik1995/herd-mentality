@@ -19,9 +19,16 @@ their phones and enter the code.
 ## Test
 
 ```bash
-node test-e2e.mjs    # adversarial end-to-end suite (no server needed; it spawns its own)
+npm test                 # runs both suites below
+node test-e2e.mjs        # backend: adversarial protocol suite over WebSocket
+node test-ui.mjs         # frontend: renders the real page in jsdom against a live server
 node bots.mjs <CODE> 6   # mock 6 players into a room you created
 ```
+
+`test-e2e.mjs` hammers the server's rules (scoring, pink cow, win-at-8, merges,
+disconnects). `test-ui.mjs` loads the actual `public/index.html` in jsdom, points
+its WebSocket at a real server, and asserts what renders — so UI text and flow are
+covered too, not just the protocol. Both spawn their own server; no setup needed.
 
 ## Stack
 
