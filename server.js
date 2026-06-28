@@ -10,7 +10,8 @@ const GRACE_MS = +process.env.GRACE_MS || 45000; // keep a disconnected player t
 // --- static file serving (just index.html + its inline assets) ---
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css" };
 const server = createServer(async (req, res) => {
-  let path = req.url === "/" ? "/index.html" : req.url.split("?")[0];
+  let path = req.url.split("?")[0]; // drop query (e.g. ?room=CODE) before resolving the file
+  if (path === "/") path = "/index.html";
   try {
     const body = await readFile(new URL("./public" + path, import.meta.url));
     const ext = path.slice(path.lastIndexOf("."));
