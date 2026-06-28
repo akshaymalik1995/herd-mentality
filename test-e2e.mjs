@@ -223,6 +223,14 @@ async function main() {
     ok("lone 'red' gets the cow", score(host, "D").cow === true);
   }
 
+  console.log("\n[15] Duplicate names get auto-suffixed");
+  {
+    const [host, code] = await createRoom("Akshay");
+    await join(code, "Akshay"); await join(code, "Akshay");
+    const names = last(host).players.map((p) => p.name).sort();
+    ok("three Akshays -> unique labels", JSON.stringify(names) === JSON.stringify(["Akshay", "Akshay (2)", "Akshay (3)"]));
+  }
+
   console.log(`\n${fail === 0 ? "ALL PASS ✅" : "FAILURES ❌"}  (${pass} passed, ${fail} failed)`);
   srv.kill();
   process.exit(fail === 0 ? 0 : 1);

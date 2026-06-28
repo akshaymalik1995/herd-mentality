@@ -93,14 +93,14 @@ function render() {
   if (state.phase !== "review") selected.clear(); // drop stale selections between rounds
   const s = state, lead = s.isLeader;
   const head = `<h1>Herd <span class="moo">Mentality</span> 🐄</h1>
-    <div class="card center"><b>${esc(s.you)}</b>${lead ? " 👑" : ""} · ${s.score} pt${s.score === 1 ? "" : "s"} ${s.cow ? "· 🐄 Pink Cow" : ""}<br><span class="muted">Room ${s.code}</span></div>`;
+    <div class="card center"><b>${s.youEmoji} ${esc(s.you)}</b>${lead ? " 👑" : ""} · ${s.score} pt${s.score === 1 ? "" : "s"} ${s.cow ? "· 🐄 Pink Cow" : ""}<br><span class="muted">Room ${s.code}</span></div>`;
   let body = "";
 
   if (s.phase === "lobby") {
     body = `<div class="card center">
         <p class="muted">Share this code so friends can join:</p>
         <div class="code">${s.code}</div>
-        <div>${s.players.map(p => `<span class="pill">${esc(p.name)}</span>`).join("")}</div>
+        <div>${s.players.map(p => `<span class="pill">${p.emoji} ${esc(p.name)}</span>`).join("")}</div>
       </div>` +
       (lead ? `<button id="start">Start game</button>`
             : `<div class="card center muted">Waiting for the host to start…</div>`);
@@ -113,7 +113,7 @@ function render() {
          <input id="ans" placeholder="Your answer" maxlength="60" autocomplete="off" />
          <button id="submit">Submit</button></div>`;
     if (lead) body += `<div class="card"><p class="muted">${s.answeredCount} / ${s.total} answered</p>
-        <div>${s.players.map(p => `<span class="pill">${p.answered ? "✅ " : "… "}${esc(p.name)}</span>`).join("")}</div></div>
+        <div>${s.players.map(p => `<span class="pill">${p.emoji} ${esc(p.name)}${p.answered ? " ✅" : ""}</span>`).join("")}</div></div>
       <button id="reveal" ${s.answeredCount < 1 ? "disabled" : ""}>Reveal answers</button>`;
 
   } else if (s.phase === "review") {
@@ -177,7 +177,7 @@ function revealBlock(s) {
 }
 function scoreCard(s) {
   return `<div class="card"><h3>Scores</h3>${s.scoreboard.map(p => `
-    <div class="row"><span class="name">${esc(p.name)}</span>
+    <div class="row"><span class="name">${p.emoji} ${esc(p.name)}</span>
       <span class="cow">${p.cow ? "🐄" : ""}</span>
       <span class="score">${p.score}</span></div>`).join("")}
     <p class="muted center" style="margin-top:10px">First to 8 wins — but not while holding the cow.</p></div>`;

@@ -20,6 +20,9 @@ const server = createServer(async (req, res) => {
   }
 });
 
+// Friendly, family-safe animal avatars — one per player per room (30 > max 20 players).
+const EMOJI = ["🐮", "🐷", "🐰", "🦊", "🐱", "🐶", "🐼", "🐨", "🐯", "🦁", "🐸", "🐵", "🐔", "🐧", "🦉", "🦄", "🐢", "🐝", "🐙", "🦋", "🐳", "🐬", "🦒", "🦓", "🦔", "🐤", "🐠", "🦅", "🦜", "🐌"];
+
 // --- game state ---
 const rooms = new Map(); // code -> room
 const newCode = () => {
@@ -88,7 +91,7 @@ function scoreFromBuckets(room) {
   }
   room.lastReveal = {
     question: room.question,
-    groups: groups.map((g) => ({ answer: bucketLabel(g), count: g.members.length, names: g.members.map((m) => room.players.get(m.playerId)?.name).filter(Boolean) }))
+    groups: groups.map((g) => ({ answer: bucketLabel(g), count: g.members.length, names: g.members.map((m) => tag(room, m.playerId)).filter(Boolean) }))
       .sort((a, b) => b.count - a.count),
     majority: winners,
   };
@@ -102,18 +105,19 @@ function scoreFromBuckets(room) {
 function playerView(room, p) {
   const isLeader = room.leader === p.id;
   return {
-    role: "player", isLeader, code: room.code, phase: room.phase, you: p.name,
+    role: "player", isLeader, code: room.code, phase: room.phase, you: p.name, youEmoji: p.emoji,
     score: p.score, cow: p.cow, answered: room.answers.has(p.id),
     question: room.phase === "lobby" ? null : room.question,
-    players: [...room.players.values()].map((x) => ({ name: x.name, answered: room.answers.has(x.id) })),
+    players: [...room.players.values()].map((x) => ({ name: x.name, emoji: x.emoji, answered: room.answers.has(x.id) })),
     answeredCount: room.answers.size, total: room.players.size,
     // only the leader sees raw answers (to merge) before scoring
-    review: isLeader && room.phase === "review" ? room.buckets.map((b) => ({ id: b.id, label: bucketLabel(b), count: b.members.length, names: b.members.map((m) => room.players.get(m.playerId)?.name).filter(Boolean) })) : null,
+    review: isLeader && room.phase === "review" ? room.buckets.map((b) => ({ id: b.id, label: bucketLabel(b), count: b.members.length, names: b.members.map((m) => tag(room, m.playerId)).filter(Boolean) })) : null,
     scoreboard: scoreboard(room), reveal: room.phase === "reveal" || room.phase === "won" ? room.lastReveal : null,
     winner: room.winner || null,
   };
 }
-const scoreboard = (room) => [...room.players.values()].map((p) => ({ name: p.name, score: p.score, cow: p.cow })).sort((a, b) => b.score - a.score);
+const scoreboard = (room) => [...room.players.values()].map((p) => ({ name: p.name, emoji: p.emoji, score: p.score, cow: p.cow })).sort((a, b) => b.score - a.score);
+const tag = (room, id) => { const p = room.players.get(id); return p ? `${p.emoji} ${p.name}` : null; }; // "🐮 Aarav"
 
 function broadcast(room) {
   for (const p of room.players.values()) if (p.ws.readyState === 1) send(p.ws, "state", playerView(room, p));
@@ -143,9 +147,14 @@ wss.on("connection", (ws) => {
 });
 
 function addPlayer(room, ws, rawName) {
-  const name = (rawName || "").trim().slice(0, 20) || "Player";
+  const base = (rawName || "").trim().slice(0, 20) || "Player";
+  const taken = new Set([...room.players.values()].map((p) => p.name));
+  let name = base, n = 2;
+  while (taken.has(name)) name = `${base} (${n++})`; // keep names unique for humans
+  const usedEmoji = new Set([...room.players.values()].map((p) => p.emoji));
+  const emoji = EMOJI.find((e) => !usedEmoji.has(e)) || "🐾";
   const id = nextId++;
-  room.players.set(id, { id, name, ws, score: 0, cow: false });
+  room.players.set(id, { id, name, emoji, ws, score: 0, cow: false });
   ws.meta = { room: room.code, role: "player", id };
   return id;
 }
