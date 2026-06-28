@@ -5,6 +5,7 @@ import { QUESTIONS } from "./questions.js";
 
 const PORT = process.env.PORT || 3000;
 const WIN_SCORE = 8;
+const GRACE_MS = +process.env.GRACE_MS || 45000; // keep a disconnected player this long so a refresh can reconnect
 
 // --- static file serving (just index.html + its inline assets) ---
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css" };
@@ -105,13 +106,13 @@ function scoreFromBuckets(room) {
 function playerView(room, p) {
   const isLeader = room.leader === p.id;
   return {
-    role: "player", isLeader, code: room.code, phase: room.phase, you: p.name, youEmoji: p.emoji,
+    role: "player", isLeader, code: room.code, phase: room.phase, you: p.name, youEmoji: p.emoji, token: p.token,
     score: p.score, cow: p.cow, answered: room.answers.has(p.id),
     question: room.phase === "lobby" ? null : room.question,
     players: [...room.players.values()].map((x) => ({ name: x.name, emoji: x.emoji, answered: room.answers.has(x.id) })),
     answeredCount: room.answers.size, total: room.players.size,
-    // only the leader sees raw answers (to merge) before scoring
-    review: isLeader && room.phase === "review" ? room.buckets.map((b) => ({ id: b.id, label: bucketLabel(b), count: b.members.length, names: b.members.map((m) => tag(room, m.playerId)).filter(Boolean) })) : null,
+    // everyone sees the grouped answers during review (so the whole group can argue merges)
+    review: room.phase === "review" ? room.buckets.map((b) => ({ id: b.id, label: bucketLabel(b), count: b.members.length, names: b.members.map((m) => tag(room, m.playerId)).filter(Boolean) })) : null,
     scoreboard: scoreboard(room), reveal: room.phase === "reveal" || room.phase === "won" ? room.lastReveal : null,
     winner: room.winner || null,
   };
@@ -120,7 +121,7 @@ const scoreboard = (room) => [...room.players.values()].map((p) => ({ name: p.na
 const tag = (room, id) => { const p = room.players.get(id); return p ? `${p.emoji} ${p.name}` : null; }; // "🐮 Aarav"
 
 function broadcast(room) {
-  for (const p of room.players.values()) if (p.ws.readyState === 1) send(p.ws, "state", playerView(room, p));
+  for (const p of room.players.values()) if (p.ws && p.ws.readyState === 1) send(p.ws, "state", playerView(room, p));
 }
 const send = (ws, t, d) => ws.send(JSON.stringify({ t, ...d }));
 
@@ -138,11 +139,11 @@ wss.on("connection", (ws) => {
     if (!meta) return;
     const room = rooms.get(meta.room);
     if (!room) return;
-    room.players.delete(meta.id);
-    room.answers.delete(meta.id);
-    if (room.players.size === 0) { rooms.delete(room.code); return; } // last one out
-    if (room.leader === meta.id) room.leader = room.players.keys().next().value; // hand off control
-    maybeAutoReveal(room); // an AFK player leaving may mean everyone left has answered
+    const p = room.players.get(meta.id);
+    if (!p || p.ws !== ws) return; // already gone, or a resumed socket superseded this one
+    p.online = false; p.ws = null;
+    if (room.leader === meta.id) { const o = [...room.players.values()].find((x) => x.online); if (o) room.leader = o.id; } // hand off while away
+    p.leaveTimer = setTimeout(() => removePlayer(room, meta.id), GRACE_MS); // reclaimable until this fires
     broadcast(room);
   });
 });
@@ -165,9 +166,22 @@ function addPlayer(room, ws, rawName) {
   const usedEmoji = new Set([...room.players.values()].map((p) => p.emoji));
   const emoji = EMOJI.find((e) => !usedEmoji.has(e)) || "🐾";
   const id = nextId++;
-  room.players.set(id, { id, name, emoji, ws, score: 0, cow: false });
+  room.players.set(id, { id, name, emoji, ws, score: 0, cow: false, token: crypto.randomUUID(), online: true, leaveTimer: null });
   ws.meta = { room: room.code, role: "player", id };
   return id;
+}
+
+// Remove a player for good (explicit leave, or grace window elapsed after a disconnect).
+function removePlayer(room, id) {
+  const p = room.players.get(id);
+  if (!p) return;
+  if (p.leaveTimer) clearTimeout(p.leaveTimer);
+  room.players.delete(id);
+  room.answers.delete(id);
+  if (room.players.size === 0) { rooms.delete(room.code); return; }
+  if (room.leader === id) room.leader = room.players.keys().next().value;
+  maybeAutoReveal(room);
+  broadcast(room);
 }
 
 function handle(ws, m) {
@@ -184,10 +198,23 @@ function handle(ws, m) {
     broadcast(room);
     return;
   }
+  if (m.t === "resume") { // reconnect after a refresh/drop, keeping identity + score
+    const room = rooms.get((m.code || "").toUpperCase());
+    if (!room) return send(ws, "error", { msg: "That game has ended.", resume: true });
+    const p = [...room.players.values()].find((x) => x.token === m.token);
+    if (!p) return send(ws, "error", { msg: "Your session expired.", resume: true });
+    if (p.leaveTimer) { clearTimeout(p.leaveTimer); p.leaveTimer = null; }
+    p.ws = ws; p.online = true;
+    ws.meta = { room: room.code, role: "player", id: p.id };
+    broadcast(room);
+    return;
+  }
   const meta = ws.meta;
   if (!meta) return;
   const room = rooms.get(meta.room);
   if (!room) return;
+
+  if (m.t === "leave") { removePlayer(room, meta.id); return; } // explicit end-session
 
   // anyone can answer
   if (m.t === "answer" && room.phase === "asking") {
@@ -204,6 +231,11 @@ function handle(ws, m) {
     room.question = drawQuestion(room);
     room.answers.clear();
     room.phase = "asking";
+    broadcast(room);
+  } else if (m.t === "skip") {
+    if (room.phase !== "asking") return;
+    room.question = drawQuestion(room); // swap in a fresh question, same round
+    room.answers.clear();
     broadcast(room);
   } else if (m.t === "reveal") {
     if (room.phase !== "asking") return;

@@ -45,20 +45,33 @@
 <div class="wrap" id="app"></div>
 <script>
 const app = document.getElementById("app");
-let ws, state = null, role = null, selected = new Set();
-const params = new URLSearchParams(location.search);
+let ws, state = null, role = null, selected = new Set(), resuming = false;
+const SKEY = "herd"; // localStorage key for the active session
+const saveSession = (s) => { try { localStorage.setItem(SKEY, JSON.stringify(s)); } catch {} };
+const loadSession = () => { try { return JSON.parse(localStorage.getItem(SKEY)); } catch { return null; } };
+const clearSession = () => { try { localStorage.removeItem(SKEY); } catch {} };
 
 function connect(then) {
   ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host);
   ws.onopen = then;
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
-    if (m.t === "error") { renderError(m.msg); return; }
-    if (m.t === "state") { state = m; role = m.role; render(); }
+    if (m.t === "error") {
+      if (m.resume) { clearSession(); resuming = false; landing(); renderError(m.msg); } // dead/expired session -> back to landing
+      else renderError(m.msg);
+      return;
+    }
+    if (m.t === "state") {
+      resuming = false;
+      state = m; role = m.role;
+      if (m.token) saveSession({ code: m.code, token: m.token }); // remember who we are, so a refresh reconnects
+      render();
+    }
   };
-  ws.onclose = () => { app.innerHTML = '<div class="card center">Disconnected. <a href="/" style="color:var(--moo)">Reload</a></div>'; };
+  ws.onclose = () => { if (!resuming) app.innerHTML = '<div class="card center">Disconnected. <a href="/" style="color:var(--moo)">Reload</a> to reconnect.</div>'; };
 }
 const sendMsg = (o) => ws.send(JSON.stringify(o));
+function leaveGame() { clearSession(); try { sendMsg({ t: "leave" }); ws.close(); } catch {} state = null; role = null; landing(); }
 
 // ---------- landing ----------
 let landName = ""; // keep the typed name when switching tabs
@@ -102,7 +115,7 @@ function render() {
   if (state.phase !== "review") selected.clear(); // drop stale selections between rounds
   const s = state, lead = s.isLeader;
   const head = `<h1>Herd <span class="moo">Mentality</span> 🐄</h1>
-    <div class="card center"><b>${s.youEmoji} ${esc(s.you)}</b>${lead ? " 👑" : ""} · ${s.score} pt${s.score === 1 ? "" : "s"} ${s.cow ? "· 🐄 Pink Cow" : ""}<br><span class="muted">Room ${s.code}</span></div>`;
+    <div class="card center"><b>${s.youEmoji} ${esc(s.you)}</b>${lead ? " 👑" : ""} · ${s.score} pt${s.score === 1 ? "" : "s"} ${s.cow ? "· 🐄 Pink Cow" : ""}<br><span class="muted">Room ${s.code}</span> · <a href="#" id="leave" style="color:var(--moo)">Leave</a></div>`;
   let body = "";
 
   if (s.phase === "lobby") {
@@ -127,21 +140,24 @@ function render() {
          <button id="submit">Submit</button></div>`;
     if (lead) body += `<div class="card"><p class="muted">${s.answeredCount} / ${s.total} answered</p>
         <div>${s.players.map(p => `<span class="pill">${p.emoji} ${esc(p.name)}${p.answered ? " ✅" : ""}</span>`).join("")}</div></div>
-      <button id="reveal" ${s.answeredCount < 1 ? "disabled" : ""}>Reveal answers</button>`;
+      <button id="reveal" ${s.answeredCount < 1 ? "disabled" : ""}>Reveal answers</button>
+      <button class="ghost" id="skip">Skip this question</button>`;
 
   } else if (s.phase === "review") {
-    body = lead
-      ? `<div class="card"><div class="q">${esc(s.question)}</div></div>
-         <div class="card">${s.review.map(b => `
-           <div class="grp merge-card ${selected.has(b.id) ? "sel" : ""}" data-id="${b.id}">
-             <b>${esc(b.label)}</b> <span class="muted">×${b.count}</span><br>
-             <span class="muted">${b.names.map(esc).join(", ")}</span>
-           </div>`).join("")}</div>
-         ${selected.size >= 2 ? `<button class="merge" id="mergeSel">Merge ${selected.size} answers</button>` : ""}
+    const cards = s.review.map(b => lead
+      ? `<div class="grp merge-card ${selected.has(b.id) ? "sel" : ""}" data-id="${b.id}">
+           <b>${esc(b.label)}</b> <span class="muted">×${b.count}</span><br>
+           <span class="muted">${b.names.map(esc).join(", ")}</span></div>`
+      : `<div class="grp"><b>${esc(b.label)}</b> <span class="muted">×${b.count}</span><br>
+           <span class="muted">${b.names.map(esc).join(", ")}</span></div>`
+    ).join("");
+    body = `<div class="card"><div class="q">${esc(s.question)}</div></div>
+      <div class="card">${cards}</div>`;
+    body += lead
+      ? `${selected.size >= 2 ? `<button class="merge" id="mergeSel">Merge ${selected.size} answers</button>` : ""}
          <button id="score">Score this round</button>
          <button class="ghost" id="regroup">Reset groups</button>`
-      : `<div class="card"><div class="q">${esc(s.question)}</div></div>
-         <div class="card center muted">Host is checking the answers… 🧐</div>`;
+      : `<div class="card center muted">Discuss! The host will merge any duplicates, then score.</div>`;
 
   } else if (s.phase === "reveal" || s.phase === "won") {
     body = revealBlock(s) + scoreCard(s);
@@ -149,20 +165,28 @@ function render() {
     else body += lead ? `<button id="next">Next question</button>` : `<div class="card center muted">Waiting for the next question…</div>`;
   }
 
+  // preserve an in-progress answer across re-renders (others answering shouldn't wipe your input)
+  const prev = document.getElementById("ans");
+  const draft = prev ? prev.value : null;
+  const wasFocused = prev && document.activeElement === prev;
+
   app.innerHTML = head + body;
 
   // answer box
   const submit = document.getElementById("submit");
   if (submit) {
     const inp = document.getElementById("ans");
+    if (draft !== null) inp.value = draft; // keep what they were typing
     const go = () => { const text = inp.value.trim(); if (text) sendMsg({ t: "answer", text }); };
     submit.onclick = go;
     inp.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
-    inp.focus();
+    if (wasFocused || draft === null) { inp.focus(); const n = inp.value.length; inp.setSelectionRange(n, n); } // focus on first show or if they were typing; don't steal otherwise
   }
   // leader controls
   bind("start", { t: "start" }); bind("reveal", { t: "reveal" });
-  bind("next", { t: "next" }); bind("restart", { t: "restart" }); bind("score", { t: "score" });
+  bind("next", { t: "next" }); bind("restart", { t: "restart" }); bind("score", { t: "score" }); bind("skip", { t: "skip" });
+  const leaveEl = document.getElementById("leave");
+  if (leaveEl) leaveEl.onclick = (e) => { e.preventDefault(); leaveGame(); };
   const regroup = document.getElementById("regroup");
   if (regroup) regroup.onclick = () => { selected.clear(); sendMsg({ t: "regroup" }); };
   const mergeSel = document.getElementById("mergeSel");
@@ -198,7 +222,10 @@ function scoreCard(s) {
 function bind(id, msg) { const el = document.getElementById(id); if (el) el.onclick = () => sendMsg(msg); }
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 
-landing();
+// boot: if we have a saved session, try to walk straight back into the game
+const saved = loadSession();
+if (saved && saved.code && saved.token) { resuming = true; connect(() => sendMsg({ t: "resume", code: saved.code, token: saved.token })); }
+else landing();
 </script>
 </body>
 </html>

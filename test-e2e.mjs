@@ -8,7 +8,8 @@ import { WebSocket } from "ws";
 
 const PORT = 3222;
 const URL = `ws://localhost:${PORT}`;
-const srv = spawn(process.execPath, ["server.js"], { env: { ...process.env, PORT: String(PORT) }, stdio: "ignore" });
+const GRACE = 500; // short reconnect grace so disconnect/removal is testable
+const srv = spawn(process.execPath, ["server.js"], { env: { ...process.env, PORT: String(PORT), GRACE_MS: String(GRACE) }, stdio: "ignore" });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const mk = () => new Promise((res, rej) => {
@@ -154,18 +155,20 @@ async function main() {
     ok("cow-free C now wins", last(host).phase === "won" && last(host).winner === "C");
   }
 
-  console.log("\n[10] Disconnect + leader hand-off");
+  console.log("\n[10] Disconnect: grace window, then removal + leader hand-off");
   {
     const [host, code] = await createRoom();
     const a = await join(code, "A"), b = await join(code, "B");
     ok("3 in room (leader + 2)", last(host).total === 3);
     a.close(); await settle();
-    ok("player leaving updates count", last(host).total === 2);
+    ok("disconnected player kept during grace", last(host).total === 3);
+    await sleep(GRACE + 250);
+    ok("removed after grace window", last(host).total === 2);
     host.close(); await settle();
-    ok("leadership handed to a remaining player", last(b).isLeader === true && last(b).total === 1);
+    ok("leadership handed to an online player immediately", last(b).isLeader === true);
     const late = await mk();
     s(late, { t: "join", code, name: "Z" }); await settle();
-    ok("room still alive after leader left", late.errors.length === 0 && last(b).total === 2);
+    ok("room still alive after leader dropped", late.errors.length === 0 && last(b).isLeader === true);
   }
 
   console.log("\n[11] Restart resets scores and cow");
@@ -242,6 +245,61 @@ async function main() {
     ok("all answered -> auto-advances to review (no reveal sent)", last(host).phase === "review");
     s(host, { t: "score" }); await settle();
     ok("scoring still works after auto-reveal", score(host, "A").score === 1);
+  }
+
+  console.log("\n[17] Leader can skip a question");
+  {
+    const [host, code] = await createRoom();
+    const a = await join(code, "A");
+    s(host, { t: "next" }); await settle();
+    const q1 = last(host).question;
+    s(a, { t: "answer", text: "stale" }); await settle();
+    ok("answer recorded before skip", last(host).answeredCount === 1);
+    s(a, { t: "skip" }); await settle();
+    ok("non-leader can't skip", last(host).question === q1);
+    s(host, { t: "skip" }); await settle();
+    ok("question changes on skip", last(host).question !== q1 && last(host).phase === "asking");
+    ok("answers cleared on skip", last(host).answeredCount === 0);
+  }
+
+  console.log("\n[18] Review answers are visible to everyone, not just the leader");
+  {
+    const [host, code] = await createRoom();
+    const a = await join(code, "A"), b = await join(code, "B");
+    s(host, { t: "next" }); await settle();
+    s(host, { t: "answer", text: "x" }); s(a, { t: "answer", text: "x" }); s(b, { t: "answer", text: "y" }); await settle();
+    ok("non-leader receives review buckets", last(a).phase === "review" && Array.isArray(last(a).review) && last(a).review.length === 2);
+    ok("non-leader's review shows the answers", last(a).review.map((g) => g.label).join(" ").includes("x"));
+  }
+
+  console.log("\n[19] Resume after a refresh keeps identity + score");
+  {
+    const [host, code] = await createRoom();
+    const a = await join(code, "A"), b = await join(code, "B");
+    await round(host, [a, b], ["same", "same"]); // A scores 1
+    const token = last(a).token;
+    ok("server hands out a session token", typeof token === "string" && token.length > 0);
+    a.close(); await settle(); // drop within grace
+    const a2 = await mk();
+    s(a2, { t: "resume", code, token }); await settle();
+    ok("resumes into the same identity", last(a2).you === "A");
+    ok("score preserved across resume", last(a2).score === 1);
+    ok("not double-counted (still 3 in room)", last(host).total === 3);
+  }
+
+  console.log("\n[20] Leaving, and dead/expired sessions");
+  {
+    const [host, code] = await createRoom();
+    const c = await join(code, "C");
+    ok("C joined", last(host).total === 2);
+    s(c, { t: "leave" }); await settle();
+    ok("explicit leave removes immediately", last(host).total === 1);
+    const z = await mk();
+    s(z, { t: "resume", code, token: "bogus-token" }); await settle();
+    ok("bad token -> resume error", z.errors.some((e) => e.resume));
+    const z2 = await mk();
+    s(z2, { t: "resume", code: "ZZZZ", token: "x" }); await settle();
+    ok("missing room -> resume error", z2.errors.some((e) => e.resume));
   }
 
   console.log(`\n${fail === 0 ? "ALL PASS ✅" : "FAILURES ❌"}  (${pass} passed, ${fail} failed)`);

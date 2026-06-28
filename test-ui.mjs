@@ -17,11 +17,18 @@ let pass = 0, fail = 0;
 function ok(name, cond) { if (cond) { pass++; console.log("  ✅", name); } else { fail++; console.log("  ❌", name); } }
 
 // Each client is a separate jsdom "tab" running the real page against the server.
-function tab() {
+function tab(seed) {
   return new JSDOM(HTML, {
     url: `http://localhost:${PORT}/`,
     runScripts: "dangerously",
-    beforeParse(window) { window.WebSocket = WebSocket; }, // give the page a real socket
+    beforeParse(window) {
+      window.WebSocket = WebSocket; // give the page a real socket
+      if (!window.localStorage) { // polyfill if this jsdom build lacks Storage
+        const m = new Map();
+        Object.defineProperty(window, "localStorage", { value: { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k), clear: () => m.clear() } });
+      }
+      if (seed) window.localStorage.setItem("herd", seed); // simulate a reload that already has a session
+    },
   });
 }
 // Read only the rendered app container — NOT body, which also contains the inline
@@ -83,9 +90,9 @@ async function main() {
   await waitForEl(host, "score");
   ok("auto-advances to review once everyone answered", !!$(host, "score"));
   ok("leader sees answer cards to merge/score", host.window.document.querySelectorAll(".merge-card").length >= 1);
-  await waitForText(bob, "checking the answers");
-  ok("non-leader sees 'checking the answers'", text(bob).toLowerCase().includes("checking the answers"));
-  ok("non-leader never stuck on 'Waiting for the herd'", !text(bob).includes("Waiting for the herd"));
+  await waitForText(bob, "pizza"); // EVERYONE sees the answers now, not just the host
+  ok("non-leader sees the answers too", text(bob).toLowerCase().includes("pizza") && text(bob).toLowerCase().includes("pasta"));
+  ok("non-leader gets discuss note, not merge controls", text(bob).toLowerCase().includes("discuss") && !$(bob, "score"));
   click(host, "score");
 
   console.log("\n[F] Score -> scoreboard visible to all");
@@ -95,6 +102,40 @@ async function main() {
   ok("scoreboard shows players with avatars", hasAvatar(text(bob), "Bob") && text(bob).includes("Akshay"));
   ok("leader can advance to next question", !!$(host, "next"));
   ok("non-leader waits for next", text(bob).toLowerCase().includes("waiting for the next"));
+
+  console.log("\n[G] Typing isn't wiped when another player submits");
+  await waitForEl(host, "next"); click(host, "next");
+  await waitForEl(bob, "ans"); await waitForEl(dup, "ans");
+  setVal(bob, "ans", "half-typed answer"); // bob is mid-typing, hasn't submitted
+  await answer(host, "something"); // another player submits -> bob re-renders
+  await sleep(250); // let bob process the broadcast/re-render
+  ok("bob's in-progress answer survives the re-render", $(bob, "ans") && $(bob, "ans").value === "half-typed answer");
+
+  console.log("\n[H] Refresh resumes the session; Leave ends it");
+  {
+    const solo = tab();
+    await waitForEl(solo, "tabJoin");
+    await createGame(solo, "Percy");
+    await waitForEl(solo, "start");
+    const session = solo.window.localStorage.getItem("herd");
+    ok("session saved to localStorage", !!session && !!JSON.parse(session).token);
+    const reloaded = tab(session); // a fresh page that already has the session = a refresh
+    await waitForEl(reloaded, "start");
+    ok("auto-resumes straight into the room", text(reloaded).includes("Percy"));
+    ok("same room after resume", reloaded.window.document.querySelector(".code").textContent === JSON.parse(session).code);
+    click(reloaded, "leave");
+    await waitForEl(reloaded, "tabJoin");
+    ok("Leave returns to the landing", !!$(reloaded, "tabJoin"));
+    ok("Leave clears the saved session", !reloaded.window.localStorage.getItem("herd"));
+  }
+
+  console.log("\n[I] Resuming a dead session falls back to landing");
+  {
+    const ghost = tab(JSON.stringify({ code: "ZZZZ", token: "nope" }));
+    await waitForEl(ghost, "tabJoin");
+    ok("dead session -> landing", !!$(ghost, "tabJoin"));
+    ok("dead session cleared from storage", !ghost.window.localStorage.getItem("herd"));
+  }
 
   console.log(`\n${fail === 0 ? "ALL UI PASS ✅" : "UI FAILURES ❌"}  (${pass} passed, ${fail} failed)`);
   srv.kill();
