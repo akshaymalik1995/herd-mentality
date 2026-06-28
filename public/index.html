@@ -62,27 +62,28 @@ const sendMsg = (o) => ws.send(JSON.stringify(o));
 function landing() {
   app.innerHTML = `
     <h1>Herd <span class="moo">Mentality</span> 🐄</h1>
-    <p class="sub">Match the herd. Be the odd one out and you’re stuck with the Pink Cow.</p>
+    <p class="sub">Everyone answers the same question — match the herd to score. Be the odd one out and you’re stuck with the Pink Cow.</p>
     <div class="card">
-      <h3>Join a game</h3>
       <input id="name" placeholder="Your name" maxlength="20" autocomplete="off" />
-      <input id="code" placeholder="Room code" maxlength="4" autocomplete="off" style="text-transform:uppercase" />
       <p class="err" id="err"></p>
-      <button id="joinBtn">Join</button>
+      <button id="createBtn">Start a new game</button>
     </div>
     <div class="card">
-      <h3>Host on the big screen</h3>
-      <p class="muted">Open this on a TV/laptop so everyone can see the question and scores.</p>
-      <button class="ghost" id="hostBtn">Create a room</button>
+      <h3>Join with a code</h3>
+      <input id="code" placeholder="Room code" maxlength="4" autocomplete="off" style="text-transform:uppercase" />
+      <button class="ghost" id="joinBtn">Join game</button>
     </div>`;
-  document.getElementById("joinBtn").onclick = () => {
-    const name = document.getElementById("name").value.trim();
-    const code = document.getElementById("code").value.trim().toUpperCase();
-    if (!name) return renderError("Enter your name.");
-    if (code.length !== 4) return renderError("Code is 4 letters.");
-    connect(() => sendMsg({ t: "join", name, code }));
+  const nameOf = () => document.getElementById("name").value.trim();
+  document.getElementById("createBtn").onclick = () => {
+    if (!nameOf()) return renderError("Enter your name first.");
+    connect(() => sendMsg({ t: "create", name: nameOf() }));
   };
-  document.getElementById("hostBtn").onclick = () => connect(() => sendMsg({ t: "host" }));
+  document.getElementById("joinBtn").onclick = () => {
+    const code = document.getElementById("code").value.trim().toUpperCase();
+    if (!nameOf()) return renderError("Enter your name first.");
+    if (code.length !== 4) return renderError("Code is 4 letters.");
+    connect(() => sendMsg({ t: "join", name: nameOf(), code }));
+  };
 }
 function renderError(msg) { const e = document.getElementById("err"); if (e) e.textContent = msg; }
 
@@ -90,52 +91,65 @@ function renderError(msg) { const e = document.getElementById("err"); if (e) e.t
 function render() {
   if (!state) return;
   if (state.phase !== "review") selected.clear(); // drop stale selections between rounds
-  if (role === "host") renderHost();
-  else renderPlayer();
-}
-
-// ---------- host ----------
-function renderHost() {
-  const s = state;
+  const s = state, lead = s.isLeader;
+  const head = `<h1>Herd <span class="moo">Mentality</span> 🐄</h1>
+    <div class="card center"><b>${esc(s.you)}</b>${lead ? " 👑" : ""} · ${s.score} pt${s.score === 1 ? "" : "s"} ${s.cow ? "· 🐄 Pink Cow" : ""}<br><span class="muted">Room ${s.code}</span></div>`;
   let body = "";
+
   if (s.phase === "lobby") {
-    body = `
-      <div class="card center">
-        <p class="muted">Players join at this site and enter the code:</p>
+    body = `<div class="card center">
+        <p class="muted">Share this code so friends can join:</p>
         <div class="code">${s.code}</div>
-        <p>${s.total} player${s.total === 1 ? "" : "s"} in</p>
         <div>${s.players.map(p => `<span class="pill">${esc(p.name)}</span>`).join("")}</div>
-      </div>
-      <button id="start" ${s.total < 1 ? "disabled" : ""}>Start game</button>`;
+      </div>` +
+      (lead ? `<button id="start">Start game</button>`
+            : `<div class="card center muted">Waiting for the host to start…</div>`);
+
   } else if (s.phase === "asking") {
-    body = `
-      <div class="card"><div class="q">${esc(s.question)}</div></div>
-      <div class="card">
-        <p>${s.answeredCount} / ${s.total} answered</p>
-        <div>${s.players.map(p => `<span class="pill">${p.answered ? "✅ " : "… "}${esc(p.name)}</span>`).join("")}</div>
-      </div>
+    body = s.answered
+      ? `<div class="card"><div class="q">${esc(s.question)}</div></div>
+         <div class="card center tick">Answer locked in ✅<br><span class="muted">Waiting for the herd…</span></div>`
+      : `<div class="card"><div class="q">${esc(s.question)}</div>
+         <input id="ans" placeholder="Your answer" maxlength="60" autocomplete="off" />
+         <button id="submit">Submit</button></div>`;
+    if (lead) body += `<div class="card"><p class="muted">${s.answeredCount} / ${s.total} answered</p>
+        <div>${s.players.map(p => `<span class="pill">${p.answered ? "✅ " : "… "}${esc(p.name)}</span>`).join("")}</div></div>
       <button id="reveal" ${s.answeredCount < 1 ? "disabled" : ""}>Reveal answers</button>`;
+
   } else if (s.phase === "review") {
-    body = `
-      <div class="card"><div class="q">${esc(s.question)}</div></div>
-      <div class="card">${s.review.map(b => `
-        <div class="grp merge-card ${selected.has(b.id) ? "sel" : ""}" data-id="${b.id}">
-          <b>${esc(b.label)}</b> <span class="muted">×${b.count}</span><br>
-          <span class="muted">${b.names.map(esc).join(", ")}</span>
-        </div>`).join("")}</div>
-      ${selected.size >= 2 ? `<button class="merge" id="mergeSel">Merge ${selected.size} answers</button>` : ""}
-      <button id="score">Score this round</button>
-      <button class="ghost" id="regroup">Reset groups</button>`;
+    body = lead
+      ? `<div class="card"><div class="q">${esc(s.question)}</div></div>
+         <div class="card">${s.review.map(b => `
+           <div class="grp merge-card ${selected.has(b.id) ? "sel" : ""}" data-id="${b.id}">
+             <b>${esc(b.label)}</b> <span class="muted">×${b.count}</span><br>
+             <span class="muted">${b.names.map(esc).join(", ")}</span>
+           </div>`).join("")}</div>
+         ${selected.size >= 2 ? `<button class="merge" id="mergeSel">Merge ${selected.size} answers</button>` : ""}
+         <button id="score">Score this round</button>
+         <button class="ghost" id="regroup">Reset groups</button>`
+      : `<div class="card"><div class="q">${esc(s.question)}</div></div>
+         <div class="card center muted">Host is checking the answers… 🧐</div>`;
+
   } else if (s.phase === "reveal" || s.phase === "won") {
-    body = revealBlock(s) + scoreCard(s) +
-      (s.phase === "won"
-        ? `<div class="card center"><div class="big">🏆 ${esc(s.winner)} wins!</div></div><button id="restart">New game</button>`
-        : `<button id="next">Next question</button>`);
+    body = revealBlock(s) + scoreCard(s);
+    if (s.phase === "won") body += `<div class="card center"><div class="big">🏆 ${esc(s.winner)} wins!</div></div>` + (lead ? `<button id="restart">New game</button>` : "");
+    else body += lead ? `<button id="next">Next question</button>` : `<div class="card center muted">Waiting for the next question…</div>`;
   }
-  app.innerHTML = `<h1>Herd <span class="moo">Mentality</span> 🐄</h1>${body}`;
+
+  app.innerHTML = head + body;
+
+  // answer box
+  const submit = document.getElementById("submit");
+  if (submit) {
+    const inp = document.getElementById("ans");
+    const go = () => { const text = inp.value.trim(); if (text) sendMsg({ t: "answer", text }); };
+    submit.onclick = go;
+    inp.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+    inp.focus();
+  }
+  // leader controls
   bind("start", { t: "start" }); bind("reveal", { t: "reveal" });
-  bind("next", { t: "next" }); bind("restart", { t: "restart" });
-  bind("score", { t: "score" });
+  bind("next", { t: "next" }); bind("restart", { t: "restart" }); bind("score", { t: "score" });
   const regroup = document.getElementById("regroup");
   if (regroup) regroup.onclick = () => { selected.clear(); sendMsg({ t: "regroup" }); };
   const mergeSel = document.getElementById("mergeSel");
@@ -147,41 +161,6 @@ function renderHost() {
       render();
     };
   });
-}
-
-// ---------- player ----------
-function renderPlayer() {
-  const s = state;
-  const head = `<h1>Herd <span class="moo">Mentality</span> 🐄</h1>
-    <div class="card center"><b>${esc(s.you)}</b> · ${s.score} pt${s.score === 1 ? "" : "s"} ${s.cow ? "· 🐄 Pink Cow" : ""}<br><span class="muted">Room ${s.code}</span></div>`;
-  let body = "";
-  if (s.phase === "lobby") {
-    body = `<div class="card center"><p>You’re in! 🎉</p><p class="muted">Waiting for the host to start…</p></div>`;
-  } else if (s.phase === "asking") {
-    if (s.answered) {
-      body = `<div class="card"><div class="q">${esc(s.question)}</div></div>
-        <div class="card center tick">Answer locked in ✅<br><span class="muted">Waiting for the herd…</span></div>`;
-    } else {
-      body = `<div class="card"><div class="q">${esc(s.question)}</div>
-        <input id="ans" placeholder="Your answer" maxlength="60" autocomplete="off" />
-        <button id="submit">Submit</button></div>`;
-    }
-  } else if (s.phase === "review") {
-    body = `<div class="card"><div class="q">${esc(s.question)}</div></div>
-      <div class="card center muted">Host is checking the answers… 🧐</div>`;
-  } else if (s.phase === "reveal" || s.phase === "won") {
-    body = revealBlock(s) + scoreCard(s) +
-      (s.phase === "won" ? `<div class="card center"><div class="big">🏆 ${esc(s.winner)} wins!</div></div>` : `<div class="card center muted">Waiting for the next question…</div>`);
-  }
-  app.innerHTML = head + body;
-  const submit = document.getElementById("submit");
-  if (submit) {
-    const inp = document.getElementById("ans");
-    const go = () => { const text = inp.value.trim(); if (text) sendMsg({ t: "answer", text }); };
-    submit.onclick = go;
-    inp.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
-    inp.focus();
-  }
 }
 
 // ---------- shared blocks ----------

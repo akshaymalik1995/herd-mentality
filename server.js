@@ -32,7 +32,7 @@ const newCode = () => {
 function makeRoom() {
   const code = newCode();
   const room = {
-    code, host: null, phase: "lobby",
+    code, leader: null, phase: "lobby",
     players: new Map(), // id -> {id,name,ws,score,cow}
     question: null, answers: new Map(), // id -> text
     buckets: [], bucketSeq: 0, // host-mergeable answer groups during review
@@ -98,29 +98,24 @@ function scoreFromBuckets(room) {
   room.winner = champ ? champ.name : null;
 }
 
-// --- views (what each client sees) ---
+// --- view (everyone is a player; the leader also gets the round controls) ---
 function playerView(room, p) {
+  const isLeader = room.leader === p.id;
   return {
-    role: "player", code: room.code, phase: room.phase, you: p.name,
+    role: "player", isLeader, code: room.code, phase: room.phase, you: p.name,
     score: p.score, cow: p.cow, answered: room.answers.has(p.id),
     question: room.phase === "lobby" ? null : room.question,
+    players: [...room.players.values()].map((x) => ({ name: x.name, answered: room.answers.has(x.id) })),
+    answeredCount: room.answers.size, total: room.players.size,
+    // only the leader sees raw answers (to merge) before scoring
+    review: isLeader && room.phase === "review" ? room.buckets.map((b) => ({ id: b.id, label: bucketLabel(b), count: b.members.length, names: b.members.map((m) => room.players.get(m.playerId)?.name).filter(Boolean) })) : null,
     scoreboard: scoreboard(room), reveal: room.phase === "reveal" || room.phase === "won" ? room.lastReveal : null,
     winner: room.winner || null,
-  };
-}
-function hostView(room) {
-  return {
-    role: "host", code: room.code, phase: room.phase,
-    players: [...room.players.values()].map((p) => ({ name: p.name, answered: room.answers.has(p.id) })),
-    question: room.question, answeredCount: room.answers.size, total: room.players.size,
-    review: room.phase === "review" ? room.buckets.map((b) => ({ id: b.id, label: bucketLabel(b), count: b.members.length, names: b.members.map((m) => room.players.get(m.playerId)?.name).filter(Boolean) })) : null,
-    scoreboard: scoreboard(room), reveal: room.lastReveal, winner: room.winner || null,
   };
 }
 const scoreboard = (room) => [...room.players.values()].map((p) => ({ name: p.name, score: p.score, cow: p.cow })).sort((a, b) => b.score - a.score);
 
 function broadcast(room) {
-  if (room.host && room.host.readyState === 1) send(room.host, "state", hostView(room));
   for (const p of room.players.values()) if (p.ws.readyState === 1) send(p.ws, "state", playerView(room, p));
 }
 const send = (ws, t, d) => ws.send(JSON.stringify({ t, ...d }));
@@ -139,30 +134,33 @@ wss.on("connection", (ws) => {
     if (!meta) return;
     const room = rooms.get(meta.room);
     if (!room) return;
-    if (meta.role === "host") { rooms.delete(room.code); }
-    else {
-      const p = room.players.get(meta.id);
-      if (p) { room.players.delete(meta.id); room.answers.delete(meta.id); }
-      broadcast(room);
-    }
+    room.players.delete(meta.id);
+    room.answers.delete(meta.id);
+    if (room.players.size === 0) { rooms.delete(room.code); return; } // last one out
+    if (room.leader === meta.id) room.leader = room.players.keys().next().value; // hand off control
+    broadcast(room);
   });
 });
 
+function addPlayer(room, ws, rawName) {
+  const name = (rawName || "").trim().slice(0, 20) || "Player";
+  const id = nextId++;
+  room.players.set(id, { id, name, ws, score: 0, cow: false });
+  ws.meta = { room: room.code, role: "player", id };
+  return id;
+}
+
 function handle(ws, m) {
-  if (m.t === "host") {
+  if (m.t === "create") { // creator is the first player AND the leader
     const room = makeRoom();
-    room.host = ws; ws.meta = { room: room.code, role: "host" };
-    send(ws, "state", hostView(room));
+    room.leader = addPlayer(room, ws, m.name);
+    broadcast(room);
     return;
   }
   if (m.t === "join") {
     const room = rooms.get((m.code || "").toUpperCase());
     if (!room) return send(ws, "error", { msg: "No room with that code." });
-    const name = (m.name || "").trim().slice(0, 20) || "Player";
-    const id = nextId++;
-    const p = { id, name, ws, score: 0, cow: false };
-    room.players.set(id, p);
-    ws.meta = { room: room.code, role: "player", id };
+    addPlayer(room, ws, m.name);
     broadcast(room);
     return;
   }
@@ -171,47 +169,48 @@ function handle(ws, m) {
   const room = rooms.get(meta.room);
   if (!room) return;
 
-  if (meta.role === "host") {
-    if (m.t === "start" || m.t === "next") {
-      if (room.players.size < 1) return;
-      room.question = drawQuestion(room);
-      room.answers.clear();
-      room.phase = "asking";
-      broadcast(room);
-    } else if (m.t === "reveal") {
-      if (room.phase !== "asking") return;
-      buildBuckets(room);
-      room.phase = "review"; // host curates groups before scoring
-      broadcast(room);
-    } else if (m.t === "merge") {
-      if (room.phase !== "review") return;
-      const ids = Array.isArray(m.ids) ? m.ids : [m.a, m.b]; // accept a list or a pair
-      const idxs = [...new Set(ids.map((id) => room.buckets.findIndex((b) => b.id === id)).filter((i) => i >= 0))];
-      if (idxs.length < 2) return;
-      const target = Math.min(...idxs);
-      const rest = idxs.filter((i) => i !== target).sort((a, b) => b - a); // splice high->low
-      for (const i of rest) room.buckets[target].members.push(...room.buckets[i].members);
-      for (const i of rest) room.buckets.splice(i, 1);
-      broadcast(room);
-    } else if (m.t === "regroup") {
-      if (room.phase !== "review") return;
-      buildBuckets(room); // undo all merges
-      broadcast(room);
-    } else if (m.t === "score") {
-      if (room.phase !== "review") return;
-      scoreFromBuckets(room);
-      broadcast(room);
-    } else if (m.t === "restart") {
-      for (const p of room.players.values()) { p.score = 0; p.cow = false; }
-      room.phase = "lobby"; room.question = null; room.answers.clear(); room.winner = null; room.lastReveal = null;
-      broadcast(room);
-    }
-  } else if (meta.role === "player") {
-    if (m.t === "answer" && room.phase === "asking") {
-      const text = (m.text || "").trim().slice(0, 60);
-      if (text) room.answers.set(meta.id, text);
-      broadcast(room);
-    }
+  // anyone can answer
+  if (m.t === "answer" && room.phase === "asking") {
+    const text = (m.text || "").trim().slice(0, 60);
+    if (text) room.answers.set(meta.id, text);
+    broadcast(room);
+    return;
+  }
+  // only the leader drives the round
+  if (room.leader !== meta.id) return;
+  if (m.t === "start" || m.t === "next") {
+    if (room.players.size < 1) return;
+    room.question = drawQuestion(room);
+    room.answers.clear();
+    room.phase = "asking";
+    broadcast(room);
+  } else if (m.t === "reveal") {
+    if (room.phase !== "asking") return;
+    buildBuckets(room);
+    room.phase = "review"; // leader curates groups before scoring
+    broadcast(room);
+  } else if (m.t === "merge") {
+    if (room.phase !== "review") return;
+    const ids = Array.isArray(m.ids) ? m.ids : [m.a, m.b]; // accept a list or a pair
+    const idxs = [...new Set(ids.map((id) => room.buckets.findIndex((b) => b.id === id)).filter((i) => i >= 0))];
+    if (idxs.length < 2) return;
+    const target = Math.min(...idxs);
+    const rest = idxs.filter((i) => i !== target).sort((a, b) => b - a); // splice high->low
+    for (const i of rest) room.buckets[target].members.push(...room.buckets[i].members);
+    for (const i of rest) room.buckets.splice(i, 1);
+    broadcast(room);
+  } else if (m.t === "regroup") {
+    if (room.phase !== "review") return;
+    buildBuckets(room); // undo all merges
+    broadcast(room);
+  } else if (m.t === "score") {
+    if (room.phase !== "review") return;
+    scoreFromBuckets(room);
+    broadcast(room);
+  } else if (m.t === "restart") {
+    for (const p of room.players.values()) { p.score = 0; p.cow = false; }
+    room.phase = "lobby"; room.question = null; room.answers.clear(); room.winner = null; room.lastReveal = null;
+    broadcast(room);
   }
 }
 
