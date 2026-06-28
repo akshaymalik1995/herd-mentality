@@ -142,8 +142,9 @@ wss.on("connection", (ws) => {
     const p = room.players.get(meta.id);
     if (!p || p.ws !== ws) return; // already gone, or a resumed socket superseded this one
     p.online = false; p.ws = null;
-    if (room.leader === meta.id) { const o = [...room.players.values()].find((x) => x.online); if (o) room.leader = o.id; } // hand off while away
-    p.leaveTimer = setTimeout(() => removePlayer(room, meta.id), GRACE_MS); // reclaimable until this fires
+    // keep leadership with them while away — a refresh reconnects in ~1s and should not lose control.
+    // If they never come back, removePlayer (below) hands it off when the grace window elapses.
+    p.leaveTimer = setTimeout(() => removePlayer(room, meta.id), GRACE_MS);
     broadcast(room);
   });
 });
@@ -179,7 +180,7 @@ function removePlayer(room, id) {
   room.players.delete(id);
   room.answers.delete(id);
   if (room.players.size === 0) { rooms.delete(room.code); return; }
-  if (room.leader === id) room.leader = room.players.keys().next().value;
+  if (room.leader === id) { const o = [...room.players.values()].find((p) => p.online); room.leader = (o || room.players.values().next().value).id; } // prefer an online player
   maybeAutoReveal(room);
   broadcast(room);
 }

@@ -24,7 +24,14 @@
   .code { font-size:clamp(40px,14vw,84px); font-weight:800; letter-spacing:.18em; color:var(--grass); text-align:center; margin:8px 0; }
   .q { font-size:clamp(22px,5.5vw,34px); font-weight:700; line-height:1.25; }
   .pill { display:inline-block; padding:4px 12px; border-radius:999px; background:#0d1030; border:1px solid var(--line); font-size:14px; margin:3px 4px 0 0; }
-  .row { display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--line); }
+  .row { display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--line); position:relative; border-radius:8px; }
+  @keyframes pulseGreen { from { background:rgba(123,216,143,.22); } to { background:transparent; } }
+  .row.gain { animation: pulseGreen 1.1s cubic-bezier(.22,1,.36,1); }
+  @keyframes floatUp { from { opacity:1; transform:translateY(0); } to { opacity:0; transform:translateY(-20px); } }
+  .plusone { position:absolute; right:48px; top:7px; color:var(--grass); font-weight:800; pointer-events:none; animation: floatUp 1s ease-out forwards; }
+  @keyframes cardIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+  .anim-in { animation: cardIn .3s cubic-bezier(.22,1,.36,1) both; }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation:none !important; transition:none !important; } }
   .row:last-child { border-bottom:0; }
   .row .name { flex:1; }
   .score { font-weight:800; font-size:20px; }
@@ -43,6 +50,7 @@
 </head>
 <body>
 <div class="wrap" id="app"></div>
+<script src="/confetti.js"></script>
 <script>
 const app = document.getElementById("app");
 let ws, state = null, role = null, selected = new Set(), resuming = false;
@@ -57,7 +65,7 @@ function connect(then) {
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
     if (m.t === "error") {
-      if (m.resume) { clearSession(); resuming = false; landing(); renderError(m.msg); } // dead/expired session -> back to landing
+      if (m.resume) { clearSession(); resuming = false; landing("join", "Your previous game has ended — start a new one or join with a code."); } // dead/expired session -> gentle return to landing
       else renderError(m.msg);
       return;
     }
@@ -75,11 +83,12 @@ function leaveGame() { clearSession(); try { sendMsg({ t: "leave" }); ws.close()
 
 // ---------- landing ----------
 let landName = ""; // keep the typed name when switching tabs
-function landing(tab = "join") {
+function landing(tab = "join", notice = "") {
   const join = tab === "join";
   app.innerHTML = `
     <h1>Herd <span class="moo">Mentality</span> 🐄</h1>
     <p class="sub">Everyone answers the same question — match the herd to score. Be the odd one out and you’re stuck with the Pink Cow.</p>
+    ${notice ? `<div class="card center muted">${esc(notice)}</div>` : ""}
     <div class="tabs">
       <button id="tabJoin" class="${join ? "" : "ghost"}">Join a game</button>
       <button id="tabCreate" class="${join ? "ghost" : ""}">Create a game</button>
@@ -113,7 +122,9 @@ function renderError(msg) { const e = document.getElementById("err"); if (e) e.t
 function render() {
   if (!state) return;
   if (state.phase !== "review") selected.clear(); // drop stale selections between rounds
+  if (state.phase === "lobby") { prevScores = {}; prevCowHolder = null; confettiFired = false; prevRank = {}; } // fresh game
   const s = state, lead = s.isLeader;
+  const phaseChanged = lastPhase !== s.phase; // drives crossfade + one-time stagger
   const head = `<h1>Herd <span class="moo">Mentality</span> 🐄</h1>
     <div class="card center"><b>${s.youEmoji} ${esc(s.you)}</b>${lead ? " 👑" : ""} · ${s.score} pt${s.score === 1 ? "" : "s"} ${s.cow ? "· 🐄 Pink Cow" : ""}<br><span class="muted">Room ${s.code}</span> · <a href="#" id="leave" style="color:var(--moo)">Leave</a></div>`;
   let body = "";
@@ -144,13 +155,14 @@ function render() {
       <button class="ghost" id="skip">Skip this question</button>`;
 
   } else if (s.phase === "review") {
-    const cards = s.review.map(b => lead
-      ? `<div class="grp merge-card ${selected.has(b.id) ? "sel" : ""}" data-id="${b.id}">
-           <b>${esc(b.label)}</b> <span class="muted">×${b.count}</span><br>
-           <span class="muted">${b.names.map(esc).join(", ")}</span></div>`
-      : `<div class="grp"><b>${esc(b.label)}</b> <span class="muted">×${b.count}</span><br>
-           <span class="muted">${b.names.map(esc).join(", ")}</span></div>`
-    ).join("");
+    const cards = s.review.map((b, i) => {
+      const anim = phaseChanged ? "anim-in" : "";                       // cascade only when review first opens
+      const delay = phaseChanged ? `style="animation-delay:${i * 45}ms"` : "";
+      const inner = `<b>${esc(b.label)}</b> <span class="muted">×${b.count}</span><br><span class="muted">${b.names.map(esc).join(", ")}</span>`;
+      return lead
+        ? `<div class="grp merge-card ${selected.has(b.id) ? "sel" : ""} ${anim}" data-id="${b.id}" ${delay}>${inner}</div>`
+        : `<div class="grp ${anim}" ${delay}>${inner}</div>`;
+    }).join("");
     body = `<div class="card"><div class="q">${esc(s.question)}</div></div>
       <div class="card">${cards}</div>`;
     body += lead
@@ -160,7 +172,11 @@ function render() {
       : `<div class="card center muted">Discuss! The host will merge any duplicates, then score.</div>`;
 
   } else if (s.phase === "reveal" || s.phase === "won") {
-    body = revealBlock(s) + scoreCard(s);
+    // answers were already seen in review; just show the herd answer + scores
+    const herd = s.reveal && s.reveal.majority.length
+      ? `<div class="card center">Herd answer: <b style="color:var(--moo)">${s.reveal.majority.map(esc).join(", ")}</b></div>`
+      : `<div class="card center muted">No agreement — nobody scored this round.</div>`;
+    body = herd + scoreCard(s);
     if (s.phase === "won") body += `<div class="card center"><div class="big">🏆 ${esc(s.winner)} wins!</div></div>` + (lead ? `<button id="restart">New game</button>` : "");
     else body += lead ? `<button id="next">Next question</button>` : `<div class="card center muted">Waiting for the next question…</div>`;
   }
@@ -198,23 +214,97 @@ function render() {
       render();
     };
   });
+
+  if (phaseChanged && app.animate) app.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: "ease-out" }); // gentle crossfade between phases
+  if (s.phase === "reveal" || s.phase === "won") { flipScoreboard(s); juice(s); } // Tier 2 re-sort, then Tier 1 juice
+  lastPhase = s.phase;
+}
+
+// Tier 2: glide scoreboard rows to their new rank (FLIP via cached indices + row height).
+function flipScoreboard(s) {
+  const rows = [...document.querySelectorAll(".row")];
+  const h = rows[0] ? rows[0].offsetHeight : 0;
+  if (h && rows[0].animate) {
+    rows.forEach((row, newIdx) => {
+      const oldIdx = prevRank[row.dataset.name];
+      if (oldIdx != null && oldIdx !== newIdx) {
+        row.animate([{ transform: `translateY(${(oldIdx - newIdx) * h}px)` }, { transform: "translateY(0)" }], { duration: 380, easing: "cubic-bezier(.22,1,.36,1)" });
+      }
+    });
+  }
+  prevRank = Object.fromEntries(s.scoreboard.map((p, i) => [p.name, i]));
+}
+
+// ---------- juice (Tier 1: score count-up + gainer pulse, pink-cow slide, win confetti) ----------
+let prevScores = {}, prevCowHolder = null, confettiFired = false, prevRank = {}, lastPhase = null;
+function juice(s) {
+  const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const rows = [...document.querySelectorAll(".row")];
+  const rowByName = (n) => rows.find((r) => r.dataset.name === n);
+  const newCowHolder = (s.scoreboard.find((p) => p.cow) || {}).name || null;
+
+  if (!reduce) {
+    for (const p of s.scoreboard) { // count up + highlight whoever gained
+      const prev = prevScores[p.name] ?? 0;
+      if (p.score > prev) {
+        const row = rowByName(p.name);
+        if (row) {
+          row.classList.add("gain");
+          const plus = document.createElement("span");
+          plus.className = "plusone"; plus.textContent = `+${p.score - prev}`;
+          row.appendChild(plus);
+          setTimeout(() => plus.remove(), 1000);
+          const sc = row.querySelector(".score");
+          if (sc) countUp(sc, prev, p.score);
+        }
+      }
+    }
+    if (newCowHolder && prevCowHolder && newCowHolder !== prevCowHolder) { // pink cow changes hands
+      const from = rowByName(prevCowHolder), to = rowByName(newCowHolder);
+      if (from && to) flyCow(from, to);
+    }
+    if (s.phase === "won" && !confettiFired && window.confetti) { confettiFired = true; popConfetti(); }
+  }
+  prevScores = Object.fromEntries(s.scoreboard.map((p) => [p.name, p.score]));
+  prevCowHolder = newCowHolder;
+}
+function countUp(el, from, to) {
+  if (typeof requestAnimationFrame !== "function" || typeof performance === "undefined") { el.textContent = to; return; }
+  const dur = 480, t0 = performance.now();
+  const step = (t) => { const k = Math.min(1, (t - t0) / dur); el.textContent = Math.round(from + (to - from) * (1 - Math.pow(1 - k, 3))); if (k < 1) requestAnimationFrame(step); else el.textContent = to; };
+  requestAnimationFrame(step);
+}
+function flyCow(from, to) {
+  const a = from.getBoundingClientRect(), b = to.getBoundingClientRect();
+  if (!a.width || !b.width) return; // no layout (headless) -> skip silently
+  const cell = to.querySelector(".cow");
+  const fly = document.createElement("div");
+  fly.textContent = "🐄";
+  fly.style.cssText = "position:fixed;left:0;top:0;font-size:22px;z-index:60;pointer-events:none;will-change:transform";
+  document.body.appendChild(fly);
+  const sx = a.right - 46, sy = a.top + a.height / 2 - 12, ex = b.right - 46, ey = b.top + b.height / 2 - 12;
+  if (!fly.animate) { fly.remove(); return; }
+  if (cell) cell.style.visibility = "hidden"; // hide the destination cow until it lands
+  const anim = fly.animate([
+    { transform: `translate(${sx}px,${sy}px) rotate(0deg)` },
+    { transform: `translate(${(sx + ex) / 2}px,${Math.min(sy, ey) - 36}px) rotate(-12deg)`, offset: .5 },
+    { transform: `translate(${ex}px,${ey}px) rotate(0deg)` },
+  ], { duration: 700, easing: "cubic-bezier(.22,1,.36,1)" });
+  anim.onfinish = () => { fly.remove(); if (cell) cell.style.visibility = ""; };
+}
+function popConfetti() {
+  const colors = ["#ff7eb6", "#7bd88f", "#f4f1e8"];
+  const end = (typeof performance !== "undefined" ? performance.now() : 0) + 900;
+  (function frame() {
+    confetti({ particleCount: 5, spread: 65, startVelocity: 46, origin: { x: Math.random(), y: -0.1 }, colors });
+    if (typeof performance !== "undefined" && performance.now() < end) requestAnimationFrame(frame);
+  })();
 }
 
 // ---------- shared blocks ----------
-function revealBlock(s) {
-  if (!s.reveal) return "";
-  const r = s.reveal;
-  const maj = new Set(r.majority.map(x => x.toLowerCase()));
-  return `<div class="card"><div class="q">${esc(r.question)}</div>
-    ${r.majority.length ? `<p class="muted">Herd answer${r.majority.length > 1 ? "s" : ""}: <b style="color:var(--moo)">${r.majority.map(esc).join(", ")}</b></p>` : `<p class="muted">No agreement — nobody scores!</p>`}
-    ${r.groups.map(g => `<div class="grp ${maj.has(g.answer.toLowerCase()) ? "maj" : ""}">
-      <b>${esc(g.answer)}</b> <span class="muted">×${g.count}</span><br>
-      <span class="muted">${g.names.map(esc).join(", ")}</span></div>`).join("")}
-  </div>`;
-}
 function scoreCard(s) {
   return `<div class="card"><h3>Scores</h3>${s.scoreboard.map(p => `
-    <div class="row"><span class="name">${p.emoji} ${esc(p.name)}</span>
+    <div class="row" data-name="${esc(p.name)}"><span class="name">${p.emoji} ${esc(p.name)}</span>
       <span class="cow">${p.cow ? "🐄" : ""}</span>
       <span class="score">${p.score}</span></div>`).join("")}
     <p class="muted center" style="margin-top:10px">First to 8 wins — but not while holding the cow.</p></div>`;

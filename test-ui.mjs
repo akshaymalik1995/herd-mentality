@@ -73,6 +73,7 @@ async function main() {
   const dup = tab(); await joinGame(dup, "Akshay", code); // same name as host
   await waitForText(host, "Akshay (2)");
   ok("duplicate name auto-suffixed in lobby", text(host).includes("Akshay (2)"));
+  await waitForText(bob, "waiting for the host"); // bob's lobby may render a beat after he joins
   ok("non-leader sees waiting message, no Start", text(bob).toLowerCase().includes("waiting for the host") && !$(bob, "start"));
 
   console.log("\n[C] Start -> answering, with live-progress messaging");
@@ -99,6 +100,7 @@ async function main() {
   await waitForText(host, "Scores");
   await waitForText(bob, "Scores");
   ok("herd answer (pizza) reported", text(host).toLowerCase().includes("pizza"));
+  ok("gainers highlighted with +N (juice)", !!host.window.document.querySelector(".row.gain") && text(host).includes("+1"));
   ok("scoreboard shows players with avatars", hasAvatar(text(bob), "Bob") && text(bob).includes("Akshay"));
   ok("leader can advance to next question", !!$(host, "next"));
   ok("non-leader waits for next", text(bob).toLowerCase().includes("waiting for the next"));
@@ -134,6 +136,7 @@ async function main() {
     const ghost = tab(JSON.stringify({ code: "ZZZZ", token: "nope" }));
     await waitForEl(ghost, "tabJoin");
     ok("dead session -> landing", !!$(ghost, "tabJoin"));
+    ok("shows a gentle notice (not a scary error)", text(ghost).toLowerCase().includes("previous game has ended"));
     ok("dead session cleared from storage", !ghost.window.localStorage.getItem("herd"));
   }
 

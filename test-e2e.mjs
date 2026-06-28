@@ -165,10 +165,12 @@ async function main() {
     await sleep(GRACE + 250);
     ok("removed after grace window", last(host).total === 2);
     host.close(); await settle();
-    ok("leadership handed to an online player immediately", last(b).isLeader === true);
+    ok("leadership NOT stolen on a mere disconnect", last(b).isLeader === false);
+    await sleep(GRACE + 250);
+    ok("leadership handed off once the leader is removed", last(b).isLeader === true);
     const late = await mk();
     s(late, { t: "join", code, name: "Z" }); await settle();
-    ok("room still alive after leader dropped", late.errors.length === 0 && last(b).isLeader === true);
+    ok("room still alive after leader removed", late.errors.length === 0 && last(b).isLeader === true);
   }
 
   console.log("\n[11] Restart resets scores and cow");
@@ -285,6 +287,18 @@ async function main() {
     ok("resumes into the same identity", last(a2).you === "A");
     ok("score preserved across resume", last(a2).score === 1);
     ok("not double-counted (still 3 in room)", last(host).total === 3);
+  }
+
+  console.log("\n[21] Leader keeps control across a refresh (even with others online)");
+  {
+    const [host, code] = await createRoom();
+    const a = await join(code, "A"); // A is online the whole time
+    const hostToken = last(host).token;
+    host.close(); await settle(); // host 'refreshes'
+    ok("control not stolen by the online player", last(a).isLeader === false);
+    const host2 = await mk();
+    s(host2, { t: "resume", code, token: hostToken }); await settle();
+    ok("leader resumes with control intact", last(host2).isLeader === true);
   }
 
   console.log("\n[20] Leaving, and dead/expired sessions");
