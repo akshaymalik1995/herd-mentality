@@ -5,6 +5,7 @@
 // Run: node test-e2e.mjs
 import { spawn } from "node:child_process";
 import { WebSocket } from "ws";
+import { QUESTIONS } from "./questions.js";
 
 const PORT = 3222;
 const URL = `ws://localhost:${PORT}`;
@@ -328,6 +329,20 @@ async function main() {
     ok("next -> round 2", last(host).round === 2);
     s(host, { t: "restart" }); await settle();
     ok("restart -> round 0", last(host).round === 0);
+  }
+
+  console.log("\n[23] Question structure + category-balanced randomization");
+  {
+    const catOf = Object.fromEntries(QUESTIONS.map((q) => [q.question, q.category]));
+    const nCats = new Set(QUESTIONS.map((q) => q.category)).size;
+    const [host, code] = await createRoom();
+    await join(code, "A");
+    const seen = [];
+    s(host, { t: "start" }); await settle(); seen.push(last(host).question);
+    for (let i = 0; i < 8; i++) { s(host, { t: "next" }); await settle(); seen.push(last(host).question); }
+    ok("served questions are real strings from the bank", seen.every((q) => typeof q === "string" && catOf[q]));
+    ok("first 9 questions rotate across categories", new Set(seen.map((q) => catOf[q])).size >= Math.min(6, nCats));
+    ok("no immediate repeats", new Set(seen).size === seen.length);
   }
 
   console.log(`\n${fail === 0 ? "ALL PASS ✅" : "FAILURES ❌"}  (${pass} passed, ${fail} failed)`);

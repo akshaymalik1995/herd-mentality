@@ -41,7 +41,7 @@ function makeRoom() {
     question: null, answers: new Map(), // id -> text
     round: 0, // questions presented this game
     buckets: [], bucketSeq: 0, // host-mergeable answer groups during review
-    deck: shuffle([...QUESTIONS.keys()]), deckPos: 0,
+    deck: buildDeck(), deckPos: 0,
     lastReveal: null,
   };
   rooms.set(code, room);
@@ -50,9 +50,23 @@ function makeRoom() {
 
 function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1));[a[i], a[j]] = [a[j], a[i]]; } return a; }
 
+// Play order that rotates through categories so consecutive questions stay varied
+// (a plain shuffle of all questions clusters same-category ones together).
+function buildDeck() {
+  const byCat = new Map();
+  QUESTIONS.forEach((q, i) => { if (!byCat.has(q.category)) byCat.set(q.category, []); byCat.get(q.category).push(i); });
+  const queues = [...byCat.values()].map((q) => shuffle(q)); // shuffle within each category
+  const deck = [];
+  while (queues.some((q) => q.length)) {
+    shuffle(queues);                                  // random category order each pass
+    for (const q of queues) if (q.length) deck.push(q.shift());
+  }
+  return deck;
+}
+
 function drawQuestion(room) {
-  if (room.deckPos >= room.deck.length) { room.deck = shuffle([...QUESTIONS.keys()]); room.deckPos = 0; }
-  return QUESTIONS[room.deck[room.deckPos++]];
+  if (room.deckPos >= room.deck.length) { room.deck = buildDeck(); room.deckPos = 0; }
+  return QUESTIONS[room.deck[room.deckPos++]].question;
 }
 
 const norm = (s) => s.trim().toLowerCase().replace(/\s+/g, " ").replace(/[.!?]+$/, "");
