@@ -4,7 +4,7 @@ import { WebSocketServer } from "ws";
 import { QUESTIONS } from "./questions.js";
 
 const PORT = process.env.PORT || 3000;
-const WIN_SCORE = 8;
+const WIN_SCORE = +process.env.WIN_SCORE || 8;
 const GRACE_MS = +process.env.GRACE_MS || 45000; // keep a disconnected player this long so a refresh can reconnect
 
 // --- static file serving (just index.html + its inline assets) ---

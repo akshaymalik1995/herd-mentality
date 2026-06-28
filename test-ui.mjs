@@ -140,6 +140,21 @@ async function main() {
     ok("dead session cleared from storage", !ghost.window.localStorage.getItem("herd"));
   }
 
+  console.log("\n[J] Rules sheet opens from the ? button and landing link");
+  {
+    const r = tab();
+    await waitForEl(r, "helpBtn");
+    ok("help button always present", !!$(r, "helpBtn"));
+    ok("'How to play' link on landing", !!$(r, "howto"));
+    ok("rules hidden by default", $(r, "rules").hidden === true);
+    $(r, "helpBtn").click();
+    ok("rules open on tap", $(r, "rules").hidden === false);
+    const rt = $(r, "rules").textContent.toLowerCase();
+    ok("rules explain cow + win condition", rt.includes("pink cow") && rt.includes("8 points") && rt.includes("majority"));
+    $(r, "rulesClose").click();
+    ok("rules close on ✕", $(r, "rules").hidden === true);
+  }
+
   console.log(`\n${fail === 0 ? "ALL UI PASS ✅" : "UI FAILURES ❌"}  (${pass} passed, ${fail} failed)`);
   srv.kill();
   process.exit(fail === 0 ? 0 : 1);

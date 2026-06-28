@@ -31,6 +31,15 @@
   .plusone { position:absolute; right:48px; top:7px; color:var(--grass); font-weight:800; pointer-events:none; animation: floatUp 1s ease-out forwards; }
   @keyframes cardIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
   .anim-in { animation: cardIn .3s cubic-bezier(.22,1,.36,1) both; }
+  #helpBtn { position:fixed; top:12px; right:12px; z-index:40; width:36px; height:36px; padding:0; margin:0; border-radius:50%; background:#0d1030; color:var(--ink); border:1px solid var(--line); font-size:17px; font-weight:800; cursor:pointer; }
+  .overlay { position:fixed; inset:0; background:rgba(8,10,25,.74); display:flex; align-items:flex-end; justify-content:center; z-index:100; }
+  .overlay[hidden] { display:none; }
+  .sheet { background:var(--card); border:1px solid var(--line); border-top:3px solid var(--moo); border-radius:18px 18px 0 0; padding:26px 20px 34px; width:100%; max-width:760px; max-height:88vh; overflow:auto; position:relative; animation: sheetUp .26s cubic-bezier(.22,1,.36,1); }
+  @keyframes sheetUp { from { transform:translateY(24px); opacity:.3; } to { transform:translateY(0); opacity:1; } }
+  .sheet h2 { margin:.1em 0 .7em; font-size:26px; }
+  .sheet p { line-height:1.55; margin:.55em 0; }
+  .sheet b { color:var(--ink); }
+  .sheet .x { position:absolute; top:14px; right:14px; width:auto; height:auto; background:transparent; border:0; color:var(--ink); font-size:20px; cursor:pointer; padding:4px 8px; margin:0; }
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation:none !important; transition:none !important; } }
   .row:last-child { border-bottom:0; }
   .row .name { flex:1; }
@@ -50,6 +59,19 @@
 </head>
 <body>
 <div class="wrap" id="app"></div>
+<button id="helpBtn" aria-label="How to play">?</button>
+<div id="rules" class="overlay" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-label="How to play">
+    <button id="rulesClose" class="x" aria-label="Close">✕</button>
+    <h2>How to play 🐄</h2>
+    <p><b>Goal.</b> Everyone answers the same question on their own phone. You score when your answer matches the <b>majority</b> — the herd.</p>
+    <p><b>Scoring.</b> Match the biggest group → <b>+1 point</b>. A tie or no majority → nobody scores.</p>
+    <p><b>The Pink Cow 🐮.</b> Give an answer <b>nobody else</b> matched and you’re stuck with the Pink Cow. It passes on when someone else later goes solo. <b>You can’t win while holding it.</b></p>
+    <p><b>Winning.</b> First to <b>8 points</b> wins — unless you’re holding the cow, then you have to wait.</p>
+    <p><b>The leader 👑.</b> Whoever creates the room runs each round: start, reveal, merge duplicate answers, score, next.</p>
+    <p class="muted">Tip: think boring. The obvious answer is usually the safe one.</p>
+  </div>
+</div>
 <script src="/confetti.js"></script>
 <script>
 const app = document.getElementById("app");
@@ -87,7 +109,7 @@ function landing(tab = "join", notice = "") {
   const join = tab === "join";
   app.innerHTML = `
     <h1>Herd <span class="moo">Mentality</span> 🐄</h1>
-    <p class="sub">Everyone answers the same question — match the herd to score. Be the odd one out and you’re stuck with the Pink Cow.</p>
+    <p class="sub">Everyone answers the same question — match the herd to score. Be the odd one out and you’re stuck with the Pink Cow. <a href="#" id="howto" style="color:var(--moo)">How to play →</a></p>
     ${notice ? `<div class="card center muted">${esc(notice)}</div>` : ""}
     <div class="tabs">
       <button id="tabJoin" class="${join ? "" : "ghost"}">Join a game</button>
@@ -104,6 +126,7 @@ function landing(tab = "join", notice = "") {
   const switchTo = (t) => { landName = nameEl.value; landing(t); };
   document.getElementById("tabJoin").onclick = () => switchTo("join");
   document.getElementById("tabCreate").onclick = () => switchTo("create");
+  document.getElementById("howto").onclick = (e) => { e.preventDefault(); openRules(); };
   document.getElementById("go").onclick = () => {
     const name = nameEl.value.trim();
     if (!name) return renderError("Enter your name first.");
@@ -311,6 +334,15 @@ function scoreCard(s) {
 }
 function bind(id, msg) { const el = document.getElementById(id); if (el) el.onclick = () => sendMsg(msg); }
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+// rules sheet (static elements, wired once)
+const rulesEl = document.getElementById("rules");
+function openRules() { rulesEl.hidden = false; }
+function closeRules() { rulesEl.hidden = true; }
+document.getElementById("helpBtn").onclick = openRules;
+document.getElementById("rulesClose").onclick = closeRules;
+rulesEl.onclick = (e) => { if (e.target === rulesEl) closeRules(); }; // tap backdrop to dismiss
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeRules(); });
 
 // boot: if we have a saved session, try to walk straight back into the game
 const saved = loadSession();
