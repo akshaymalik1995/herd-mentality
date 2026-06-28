@@ -1,7 +1,8 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
-import { QUESTIONS } from "./questions.js";
+import { QUESTIONS, CATEGORIES } from "./questions.js";
 
 const PORT = process.env.PORT || 3000;
 const WIN_SCORE = +process.env.WIN_SCORE || 8;
@@ -42,7 +43,7 @@ function makeRoom() {
     question: null, answers: new Map(), // id -> text
     round: 0, // questions presented this game
     buckets: [], bucketSeq: 0, // host-mergeable answer groups during review
-    deck: buildDeck(), deckPos: 0,
+    pools: buildPools(), catWeights: new Map(CATEGORIES.map((c) => [c, 1])), recent: [], pending: null,
     lastReveal: null,
   };
   rooms.set(code, room);
@@ -51,23 +52,77 @@ function makeRoom() {
 
 function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1));[a[i], a[j]] = [a[j], a[i]]; } return a; }
 
-// Play order that rotates through categories so consecutive questions stay varied
-// (a plain shuffle of all questions clusters same-category ones together).
-function buildDeck() {
-  const byCat = new Map();
-  QUESTIONS.forEach((q, i) => { if (!byCat.has(q.category)) byCat.set(q.category, []); byCat.get(q.category).push(i); });
-  const queues = [...byCat.values()].map((q) => shuffle(q)); // shuffle within each category
-  const deck = [];
-  while (queues.some((q) => q.length)) {
-    shuffle(queues);                                  // random category order each pass
-    for (const q of queues) if (q.length) deck.push(q.shift());
-  }
-  return deck;
+// --- adaptive question selection ---------------------------------------------
+// Categories are slot-machine arms. Every room starts neutral; after each round we
+// reward the category just played (good answer-spread = up, skipped/boring = down)
+// and bias the next draw toward what THIS table enjoys. Pure in-memory per room — no
+// DB. A short recency window keeps a hot category from clustering back-to-back.
+const EXPLORE = 0.15; // chance to pick a random category anyway, so nothing gets stuck
+const ALPHA = 0.4;    // how fast a weight moves toward the latest signal
+const WFLOOR = 0.05;  // a category can dip but never die — exploration can revive it
+
+const CAT_INDEX = (() => { // category -> its question indices, computed once
+  const m = new Map();
+  QUESTIONS.forEach((q, i) => { if (!m.has(q.category)) m.set(q.category, []); m.get(q.category).push(i); });
+  return m;
+})();
+
+export function buildPools() {
+  const m = new Map();
+  for (const c of CATEGORIES) m.set(c, shuffle([...CAT_INDEX.get(c)])); // shuffled copy per category
+  return m;
 }
 
-function drawQuestion(room) {
-  if (room.deckPos >= room.deck.length) { room.deck = buildDeck(); room.deckPos = 0; }
-  return QUESTIONS[room.deck[room.deckPos++]].question;
+// Get a category's unused-question pool, reshuffling it when exhausted. Per-category
+// refill (not global) so a small, heavily-favoured category never starves mid-game.
+function poolFor(room, c) {
+  let p = room.pools.get(c);
+  if (!p || !p.length) { p = shuffle([...CAT_INDEX.get(c)]); room.pools.set(c, p); }
+  return p;
+}
+
+function pickCategory(room) {
+  const win = Math.min(2, CATEGORIES.length - 1);
+  const recent = room.recent.slice(-win);
+  const pool = CATEGORIES.filter((c) => !recent.includes(c)); // avoid the last couple, for variety
+  const choices = pool.length ? pool : CATEGORIES;
+  if (Math.random() < EXPLORE) return choices[Math.floor(Math.random() * choices.length)];
+  // Square the weights so a clear favourite actually dominates the draw (1.0 vs 0.5
+  // becomes 4:1, not 2:1) — the EMA stays gentle, only the *selection* is sharpened.
+  const weights = choices.map((c) => (room.catWeights.get(c) ?? 1) ** 2);
+  let r = Math.random() * weights.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < choices.length; i++) { r -= weights[i]; if (r <= 0) return choices[i]; }
+  return choices[choices.length - 1];
+}
+
+export function drawQuestion(room) {
+  const cat = pickCategory(room);
+  const i = poolFor(room, cat).pop();
+  room.pending = { i, category: cat }; // remember what's in play, to reward it once the round resolves
+  room.recent.push(cat);
+  if (room.recent.length > 8) room.recent.shift(); // bounded history
+  return QUESTIONS[i].question;
+}
+
+// Move the played category's weight toward `reward` (0 bad … 1 great). Skip -> 0;
+// scoring -> the answer-spread reward below. No-op if nothing is pending.
+export function rewardCategory(room, reward) {
+  const pend = room.pending; if (!pend) return;
+  const w = room.catWeights.get(pend.category) ?? 1;
+  room.catWeights.set(pend.category, Math.max(WFLOOR, w * (1 - ALPHA) + ALPHA * reward));
+  room.pending = null;
+}
+
+// The fun is in the spread: a clear majority with an odd-one-out (cow risk) is peak;
+// everyone-identical or everyone-unique is a dud. Null when too few answered to judge.
+export function spreadReward(buckets) {
+  const n = buckets.reduce((s, b) => s + b.members.length, 0);
+  if (n < 2) return null;
+  const distinct = buckets.length;
+  if (distinct === 1) return 0.25;   // one shared answer — boring, no cow at stake
+  if (distinct === n) return 0.25;   // all different — no herd forms
+  const lone = buckets.filter((b) => b.members.length === 1).length;
+  return lone === 1 ? 1.0 : 0.8;     // majority + a lone straggler = the good stuff
 }
 
 const norm = (s) => s.trim().toLowerCase().replace(/\s+/g, " ").replace(/[.!?]+$/, "");
@@ -112,6 +167,7 @@ function scoreFromBuckets(room) {
       .sort((a, b) => b.count - a.count),
     majority: winners,
   };
+  const sr = spreadReward(room.buckets); if (sr !== null) rewardCategory(room, sr); // feed the adaptive selector
   // win check: >= WIN_SCORE and not holding the cow
   const champ = [...room.players.values()].find((p) => p.score >= WIN_SCORE && !p.cow);
   room.phase = champ ? "won" : "reveal";
@@ -253,6 +309,7 @@ function handle(ws, m) {
     broadcast(room);
   } else if (m.t === "skip") {
     if (room.phase !== "asking") return;
+    rewardCategory(room, 0); // a skip is a strong down-vote for that category
     room.question = drawQuestion(room); // swap in a fresh question, same round
     room.answers.clear();
     broadcast(room);
@@ -286,4 +343,5 @@ function handle(ws, m) {
   }
 }
 
-server.listen(PORT, () => console.log(`Herd Mentality on http://localhost:${PORT}`));
+// Only listen when run directly (`node server.js`); stays importable for unit tests.
+if (process.argv[1] === fileURLToPath(import.meta.url)) server.listen(PORT, () => console.log(`Herd Mentality on http://localhost:${PORT}`));

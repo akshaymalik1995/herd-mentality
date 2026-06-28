@@ -5,7 +5,8 @@
 // Run: node test-e2e.mjs
 import { spawn } from "node:child_process";
 import { WebSocket } from "ws";
-import { QUESTIONS } from "./questions.js";
+import { QUESTIONS, CATEGORIES } from "./questions.js";
+import { spreadReward, buildPools, drawQuestion, rewardCategory } from "./server.js";
 
 const PORT = 3222;
 const URL = `ws://localhost:${PORT}`;
@@ -331,7 +332,7 @@ async function main() {
     ok("restart -> round 0", last(host).round === 0);
   }
 
-  console.log("\n[23] Question structure + category-balanced randomization");
+  console.log("\n[23] Question structure + adaptive variety");
   {
     const catOf = Object.fromEntries(QUESTIONS.map((q) => [q.question, q.category]));
     const nCats = new Set(QUESTIONS.map((q) => q.category)).size;
@@ -339,10 +340,39 @@ async function main() {
     await join(code, "A");
     const seen = [];
     s(host, { t: "start" }); await settle(); seen.push(last(host).question);
-    for (let i = 0; i < 8; i++) { s(host, { t: "next" }); await settle(); seen.push(last(host).question); }
+    for (let i = 0; i < 19; i++) { s(host, { t: "next" }); await settle(); seen.push(last(host).question); }
+    const cats = seen.map((q) => catOf[q]);
     ok("served questions are real strings from the bank", seen.every((q) => typeof q === "string" && catOf[q]));
-    ok("first 9 questions rotate across categories", new Set(seen.map((q) => catOf[q])).size >= Math.min(6, nCats));
-    ok("no immediate repeats", new Set(seen).size === seen.length);
+    ok("no repeated questions within a session", new Set(seen).size === seen.length);
+    ok("never clusters the same category back-to-back", cats.every((c, i) => i === 0 || c !== cats[i - 1]));
+    ok("spreads across many categories over a session", new Set(cats).size >= Math.min(6, nCats));
+  }
+
+  console.log("\n[24] Answer-spread reward (the adaptive signal)");
+  {
+    const B = (...sizes) => sizes.map((n) => ({ members: Array(n).fill(0) })); // buckets of given sizes
+    ok("too few answers -> no signal", spreadReward(B(1)) === null);
+    ok("everyone identical -> dud (low)", spreadReward(B(4)) === 0.25);
+    ok("all unique -> dud (low)", spreadReward(B(1, 1, 1, 1)) === 0.25);
+    ok("majority + lone straggler -> peak", spreadReward(B(3, 1)) === 1.0);
+    ok("majority, no lone -> good", spreadReward(B(2, 2)) === 0.8);
+  }
+
+  console.log("\n[25] Adaptive selector leans toward what the table enjoys");
+  {
+    const LOVE = "Dating & Relationships", SKIP = "Dark Comedy";
+    // Drive the REAL selector: love one category, skip another, neutral on the rest.
+    const room = { pools: buildPools(), catWeights: new Map(CATEGORIES.map((c) => [c, 1])), recent: [], pending: null };
+    const late = Object.fromEntries(CATEGORIES.map((c) => [c, 0]));
+    for (let r = 0; r < 120; r++) {
+      drawQuestion(room);
+      const cat = room.pending.category;
+      if (r >= 80) late[cat]++;
+      rewardCategory(room, cat === SKIP ? 0 : cat === LOVE ? 1.0 : 0.4);
+    }
+    ok("loved category outdraws skipped one (>=2x) late in the session", late[LOVE] >= 2 * late[SKIP]);
+    ok("loved weight ends high, skipped near the floor", room.catWeights.get(LOVE) > 0.8 && room.catWeights.get(SKIP) < 0.2);
+    ok("no category is starved out (all still drawable)", CATEGORIES.every((c) => room.catWeights.get(c) > 0));
   }
 
   console.log(`\n${fail === 0 ? "ALL PASS ✅" : "FAILURES ❌"}  (${pass} passed, ${fail} failed)`);
