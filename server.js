@@ -23,8 +23,10 @@ const server = createServer(async (req, res) => {
   }
 });
 
-// Friendly, family-safe animal avatars — one per player per room (30 > max 20 players).
-const EMOJI = ["🐮", "🐷", "🐰", "🦊", "🐱", "🐶", "🐼", "🐨", "🐯", "🦁", "🐸", "🐵", "🐔", "🐧", "🦉", "🦄", "🐢", "🐝", "🐙", "🦋", "🐳", "🐬", "🦒", "🦓", "🦔", "🐤", "🐠", "🦅", "🦜", "🐌"];
+// Friendly, family-safe animal avatars — one per player per room (32 > max 20 players).
+// Curated to animals that exist in Google's animated Noto emoji set, so every
+// player's avatar actually animates (client maps the char -> animated webp by codepoint).
+const EMOJI = ["🐮", "🐱", "🦊", "🐼", "🦁", "🐸", "🐧", "🦉", "🦄", "🐢", "🐝", "🐙", "🦋", "🐳", "🐬", "🦔", "🐤", "🦅", "🐌", "🦇", "🐺", "🐻", "🐕", "🐓", "🦩", "🦚", "🦥", "🦦", "🦀", "🦞", "🐍", "🐞"];
 
 // --- game state ---
 const rooms = new Map(); // code -> room
@@ -241,7 +243,8 @@ function addPlayer(room, ws, rawName) {
   let name = base, n = 2;
   while (taken.has(name)) name = `${base} (${n++})`; // keep names unique for humans
   const usedEmoji = new Set([...room.players.values()].map((p) => p.emoji));
-  const emoji = EMOJI.find((e) => !usedEmoji.has(e)) || "🐾";
+  const free = EMOJI.filter((e) => !usedEmoji.has(e)); // random unused avatar so it's not always cow-first
+  const emoji = free.length ? free[Math.floor(Math.random() * free.length)] : "🐾";
   const id = nextId++;
   room.players.set(id, { id, name, emoji, ws, score: 0, cow: false, token: crypto.randomUUID(), online: true, leaveTimer: null });
   ws.meta = { room: room.code, role: "player", id };

@@ -44,11 +44,18 @@
   .sheet .x { position:absolute; top:14px; right:14px; width:auto; height:auto; background:transparent; border:0; color:var(--ink); font-size:20px; cursor:pointer; padding:4px 8px; margin:0; }
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation:none !important; transition:none !important; } }
   .row:last-child { border-bottom:0; }
-  .row .name { flex:1; }
+  .row .name { flex:1; display:flex; align-items:center; gap:9px; }
+  .row .name .ava { vertical-align:0; }
   .score { font-weight:800; font-size:20px; }
   .cow { font-size:20px; }
   .grp { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:4px 14px; margin:8px 0; }
   .qcard { margin-bottom:24px; background:linear-gradient(135deg,#252a55,#1b1f3b); border-color:#3d4488; border-left:4px solid var(--moo); }
+  .ava { width:1.5em; height:1.5em; vertical-align:-0.35em; }
+  .ava.big { width:2em; height:2em; vertical-align:-0.5em; }
+  .lobgrid { display:flex; flex-wrap:wrap; gap:12px; justify-content:center; margin-top:14px; }
+  .ptile { display:flex; flex-direction:column; align-items:center; gap:5px; width:76px; }
+  .ptile .ava.big { width:46px; height:46px; vertical-align:0; }
+  .ptile .nm { font-size:13px; opacity:.85; text-align:center; max-width:76px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .roster { display:flex; flex-wrap:wrap; gap:8px; }
   .roster .pill { margin:0; }
   .pill.done { border-color:var(--grass); color:var(--grass); }
@@ -106,6 +113,8 @@
 const app = document.getElementById("app");
 let ws, state = null, role = null, selected = new Set(), resuming = false;
 const SKEY = "herd"; // localStorage key for the active session
+const NKEY = "herd_name"; // remember the player's name across visits
+const savedName = (() => { try { return localStorage.getItem(NKEY) || ""; } catch { return ""; } })();
 const saveSession = (s) => { try { localStorage.setItem(SKEY, JSON.stringify(s)); } catch {} };
 const loadSession = () => { try { return JSON.parse(localStorage.getItem(SKEY)); } catch { return null; } };
 const clearSession = () => { try { localStorage.removeItem(SKEY); } catch {} };
@@ -134,7 +143,7 @@ function leaveGame() { clearSession(); try { sendMsg({ t: "leave" }); ws.close()
 function copyText(t) { return (navigator.clipboard && navigator.clipboard.writeText) ? navigator.clipboard.writeText(t) : Promise.resolve(); }
 
 // ---------- landing ----------
-let landName = ""; // keep the typed name when switching tabs
+let landName = savedName; // keep the typed name when switching tabs; seeded from last visit
 function landing(tab = "join", notice = "") {
   const join = tab === "join";
   app.innerHTML = `
@@ -161,6 +170,7 @@ function landing(tab = "join", notice = "") {
   document.getElementById("go").onclick = () => {
     const name = nameEl.value.trim();
     if (!name) return renderError("Enter your name first.");
+    try { localStorage.setItem(NKEY, name); } catch {} // remember for next time
     if (join) {
       const code = document.getElementById("code").value.trim().toUpperCase();
       if (code.length !== 4) return renderError("Code is 4 letters.");
@@ -182,7 +192,7 @@ function render() {
   const cowB = s.cow ? `<span class="cowpill">🐄 Pink Cow</span>` : "";
   const head = `<h1>Herd <span class="moo">Mentality</span> 🐄</h1>
     <div class="topbar">
-      <div class="me"><span>${s.youEmoji} ${esc(s.you)}${lead ? " 👑" : ""}</span><span class="pts">${s.score} pt${s.score === 1 ? "" : "s"}</span>${cowB}</div>
+      <div class="me"><span>${ava(s.youEmoji, false, true)} ${esc(s.you)}${lead ? " 👑" : ""}</span><span class="pts">${s.score} pt${s.score === 1 ? "" : "s"}</span>${cowB}</div>
       <div class="meta"><span class="muted">Room ${s.code}${s.round ? ` · Q${s.round}` : ""}</span><a href="#" id="leave">Leave</a></div>
     </div>`;
   let body = "";
@@ -193,7 +203,8 @@ function render() {
         <div class="code" id="roomCode" role="button" tabindex="0" title="Tap to copy">${s.code}</div>
         <button class="ghost" id="shareBtn" style="width:auto;padding:10px 22px;margin:4px auto 0">📤 Share invite</button>
         <div class="muted" id="copyMsg" aria-live="polite" style="min-height:1.2em;margin-top:6px"></div>
-        <div style="margin-top:8px">${s.players.map(p => `<span class="pill">${p.emoji} ${esc(p.name)}</span>`).join("")} <span class="muted">· ${s.total} in</span></div>
+        <div class="lobgrid">${s.players.map(p => `<div class="ptile">${ava(p.emoji, true)}<span class="nm">${esc(p.name)}</span></div>`).join("")}</div>
+        <p class="muted" style="margin-top:10px">${s.total} in the herd</p>
       </div>` +
       (lead ? `<button id="start">Start game</button>`
             : `<div class="card center muted">Waiting for the host to start…</div>`);
@@ -211,7 +222,7 @@ function render() {
          <input id="ans" placeholder="Your answer" maxlength="60" autocomplete="off" />
          <button id="submit">Submit</button></div>`;
     if (lead) body += `<div class="card">
-        <div class="roster">${s.players.map(p => `<span class="pill ${p.answered ? "done" : "wait"}">${p.emoji} ${esc(p.name)}${p.answered ? " ✓" : ""}</span>`).join("")}</div></div>
+        <div class="roster">${s.players.map(p => `<span class="pill ${p.answered ? "done" : "wait"}">${ava(p.emoji)} ${esc(p.name)}${p.answered ? " ✓" : ""}</span>`).join("")}</div></div>
       <div class="btnrow">
         <button id="reveal" ${s.answeredCount < 1 ? "disabled" : ""}>Reveal answers</button>
         <button class="ghost" id="skip">Skip this question</button>
@@ -226,7 +237,7 @@ function render() {
       const head = b.count >= 2
         ? `<div class="ghead"><span class="tally">${b.count}</span>${herd ? `<span class="htag">🌿 Herd</span>` : `<span class="muted">matched</span>`}</div>`
         : "";
-      const rows = b.members.map((m) => `<div class="mrow"><span class="who">${esc(m.emoji)} ${esc(m.name)}</span><span class="atext">${esc(m.text)}</span></div>`).join("");
+      const rows = b.members.map((m) => `<div class="mrow"><span class="who">${ava(m.emoji)} ${esc(m.name)}</span><span class="atext">${esc(m.text)}</span></div>`).join("");
       const cls = `grp ${herd ? "herd " : ""}${anim} ${lead ? "merge-card " : ""}${selected.has(b.id) ? "sel" : ""}`;
       const attrs = lead ? `data-id="${b.id}" role="button" tabindex="0" aria-pressed="${selected.has(b.id)}"` : "";
       const pick = lead ? `<span class="pick">✓</span>` : "";
@@ -397,13 +408,19 @@ function popConfetti() {
 // ---------- shared blocks ----------
 function scoreCard(s) {
   return `<div class="card"><h3>Scores</h3>${s.scoreboard.map(p => `
-    <div class="row" data-name="${esc(p.name)}"><span class="name">${p.emoji} ${esc(p.name)}</span>
+    <div class="row" data-name="${esc(p.name)}"><span class="name">${ava(p.emoji)} ${esc(p.name)}</span>
       <span class="cow">${p.cow ? "🐄" : ""}</span>
       <span class="score">${p.score}</span></div>`).join("")}
     <p class="muted center" style="margin-top:10px">First to 8 wins — but not while holding the cow.</p></div>`;
 }
 function bind(id, msg) { const el = document.getElementById(id); if (el) el.onclick = () => sendMsg(msg); }
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+// Animated avatar: map the assigned emoji to Google's animated Noto webp by codepoint.
+// Falls back to the plain emoji char if the frame ever fails to load (offline / missing).
+const NOTO = "https://fonts.gstatic.com/s/e/notoemoji/latest";
+// anim=true -> looping webp (used only for the top-bar "you" avatar); otherwise a
+// static svg of the same Noto emoji, so resting avatars don't all wiggle at once.
+function ava(e, big, anim) { const cp = [...e][0].codePointAt(0).toString(16); return `<img class="ava${big ? " big" : ""}" src="${NOTO}/${cp}/${anim ? "512.webp" : "emoji.svg"}" alt="" onerror="this.outerHTML='${e}'">`; }
 
 // rules sheet (static elements, wired once)
 const rulesEl = document.getElementById("rules");
