@@ -221,7 +221,7 @@ async function main() {
     s(host, { t: "next" }); await settle();
     s(a, { t: "answer", text: "color" }); s(b, { t: "answer", text: "colour" }); s(c, { t: "answer", text: "kolor" }); s(d, { t: "answer", text: "red" }); await settle();
     s(host, { t: "reveal" }); await settle();
-    const variants = last(host).review.filter((g) => g.label.toLowerCase() !== "red").map((g) => g.id);
+    const variants = last(host).review.filter((g) => g.members[0].text.toLowerCase() !== "red").map((g) => g.id);
     ok("3 spelling variants present", variants.length === 3);
     s(host, { t: "merge", ids: variants }); await settle(); // one-shot merge of all three
     ok("merged into a single bucket of 3", last(host).review.find((g) => g.count === 3) && last(host).review.length === 2);
@@ -273,7 +273,7 @@ async function main() {
     s(host, { t: "next" }); await settle();
     s(host, { t: "answer", text: "x" }); s(a, { t: "answer", text: "x" }); s(b, { t: "answer", text: "y" }); await settle();
     ok("non-leader receives review buckets", last(a).phase === "review" && Array.isArray(last(a).review) && last(a).review.length === 2);
-    ok("non-leader's review shows the answers", last(a).review.map((g) => g.label).join(" ").includes("x"));
+    ok("non-leader's review shows the answers", last(a).review.flatMap((g) => g.members.map((m) => m.text)).includes("x"));
   }
 
   console.log("\n[19] Resume after a refresh keeps identity + score");

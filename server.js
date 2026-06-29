@@ -185,7 +185,10 @@ function playerView(room, p) {
     players: [...room.players.values()].map((x) => ({ name: x.name, emoji: x.emoji, answered: room.answers.has(x.id) })),
     answeredCount: room.answers.size, total: room.players.size,
     // everyone sees the grouped answers during review (so the whole group can argue merges)
-    review: room.phase === "review" ? room.buckets.map((b) => ({ id: b.id, label: bucketLabel(b), count: b.members.length, names: b.members.map((m) => tag(room, m.playerId)).filter(Boolean) })) : null,
+    review: room.phase === "review" ? room.buckets.map((b) => ({
+      id: b.id, count: b.members.length,
+      members: b.members.map((m) => { const x = room.players.get(m.playerId); return x ? { emoji: x.emoji, name: x.name, text: m.text } : null; }).filter(Boolean),
+    })) : null,
     scoreboard: scoreboard(room), reveal: room.phase === "reveal" || room.phase === "won" ? room.lastReveal : null,
     winner: room.winner || null,
   };

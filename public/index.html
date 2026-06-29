@@ -16,7 +16,7 @@
   button { font:inherit; font-weight:600; border:0; border-radius:12px; padding:14px 20px; background:var(--moo); color:#2a0d1c; cursor:pointer; width:100%; margin-top:8px; }
   button.ghost { background:transparent; color:var(--ink); border:1px solid var(--line); }
   button:active { transform:translateY(1px); }
-  button:disabled { opacity:.4; cursor:not-allowed; }
+  button:disabled { background:#21264a; color:#646aa0; border-color:transparent; cursor:not-allowed; }
   button.merge { background:transparent; color:var(--grass); border:1.5px solid var(--grass); }
   .tabs { display:flex; gap:8px; margin-bottom:14px; }
   .tabs button { flex:1; margin:0; }
@@ -47,11 +47,37 @@
   .row .name { flex:1; }
   .score { font-weight:800; font-size:20px; }
   .cow { font-size:20px; }
-  .grp { padding:10px 0; border-bottom:1px solid var(--line); }
-  .grp b { color:var(--grass); }
-  .grp.maj b { color:var(--moo); }
-  .merge-card { cursor:pointer; border-radius:10px; padding-left:8px; transition:outline .1s; }
-  .merge-card.sel { outline:2px solid var(--moo); background:#0d1030; }
+  .grp { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:4px 14px; margin:8px 0; }
+  .qcard { margin-bottom:24px; background:linear-gradient(135deg,#252a55,#1b1f3b); border-color:#3d4488; border-left:4px solid var(--moo); }
+  .roster { display:flex; flex-wrap:wrap; gap:8px; }
+  .roster .pill { margin:0; }
+  .pill.done { border-color:var(--grass); color:var(--grass); }
+  .pill.wait { opacity:.5; }
+  .answerbox { display:flex; gap:8px; align-items:stretch; }
+  .answerbox input { margin-top:0; }
+  .answerbox button { width:auto; margin-top:0; padding:14px 26px; white-space:nowrap; }
+  .grp.herd { border-color:var(--grass); background:rgba(123,216,143,.08); }
+  .ghead { display:flex; align-items:center; gap:8px; padding:9px 2px 5px; font-size:13px; }
+  .ghead .tally { background:#0d1030; border:1px solid var(--line); border-radius:999px; padding:2px 11px; font-weight:800; }
+  .grp.herd .ghead .tally { border-color:var(--grass); color:var(--grass); }
+  .htag { color:var(--grass); font-weight:700; }
+  .mrow { display:flex; align-items:center; gap:12px; padding:10px 2px; border-top:1px solid var(--line); }
+  .mrow:first-child { border-top:0; }
+  .mrow .who { min-width:108px; font-weight:600; flex-shrink:0; }
+  .mrow .atext { flex:1; }
+  .merge-card { cursor:pointer; transition:outline .1s; position:relative; padding-right:46px; }
+  .merge-card.sel { outline:2px solid var(--moo); }
+  .pick { position:absolute; top:12px; right:12px; width:24px; height:24px; border-radius:50%; border:2px solid var(--line); display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:800; color:transparent; }
+  .merge-card.sel .pick { border-color:var(--moo); background:var(--moo); color:#2a0d1c; }
+  .hint { text-align:center; opacity:.72; font-size:14px; margin:26px 0 6px; }
+  .btnrow { display:flex; gap:8px; }
+  .btnrow button { flex:1; }
+  .topbar { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 14px; background:var(--card); border:1px solid var(--line); border-radius:14px; padding:12px 16px; margin:14px 0; }
+  .topbar .me { display:flex; align-items:center; gap:10px; font-weight:700; }
+  .topbar .pts { background:#0d1030; border:1px solid var(--line); border-radius:999px; padding:3px 11px; font-size:14px; font-weight:800; }
+  .topbar .cowpill { background:#0d1030; border:1px solid var(--moo); color:var(--moo); border-radius:999px; padding:3px 11px; font-size:14px; font-weight:700; }
+  .topbar .meta { display:flex; align-items:center; gap:12px; font-size:14px; }
+  .topbar .meta a { color:var(--moo); }
   .muted { opacity:.72; }
   button:focus-visible, a:focus-visible, input:focus-visible, [role="button"]:focus-visible { outline:2px solid var(--moo); outline-offset:2px; }
   .big { font-size:clamp(30px,8vw,52px); font-weight:800; color:var(--moo); text-align:center; }
@@ -153,8 +179,12 @@ function render() {
   if (state.phase === "lobby") { prevScores = {}; prevCowHolder = null; confettiFired = false; prevRank = {}; } // fresh game
   const s = state, lead = s.isLeader;
   const phaseChanged = lastPhase !== s.phase; // drives crossfade + one-time stagger
+  const cowB = s.cow ? `<span class="cowpill">🐄 Pink Cow</span>` : "";
   const head = `<h1>Herd <span class="moo">Mentality</span> 🐄</h1>
-    <div class="card center"><b>${s.youEmoji} ${esc(s.you)}</b>${lead ? " 👑" : ""} · ${s.score} pt${s.score === 1 ? "" : "s"} ${s.cow ? "· 🐄 Pink Cow" : ""}<br><span class="muted">Room ${s.code}${s.round ? ` · Q${s.round}` : ""}</span> · <a href="#" id="leave" style="color:var(--moo)">Leave</a></div>`;
+    <div class="topbar">
+      <div class="me"><span>${s.youEmoji} ${esc(s.you)}${lead ? " 👑" : ""}</span><span class="pts">${s.score} pt${s.score === 1 ? "" : "s"}</span>${cowB}</div>
+      <div class="meta"><span class="muted">Room ${s.code}${s.round ? ` · Q${s.round}` : ""}</span><a href="#" id="leave">Leave</a></div>
+    </div>`;
   let body = "";
 
   if (s.phase === "lobby") {
@@ -174,32 +204,46 @@ function render() {
       ? (lead ? "Everyone’s in — hit Reveal 👇" : "Everyone’s in — waiting for the host to reveal…")
       : `${s.answeredCount} / ${s.total} answered…`;
     body = s.answered
-      ? `<div class="card"><div class="q">${esc(s.question)}</div></div>
+      ? `<div class="card qcard"><div class="q">${esc(s.question)}</div></div>
          <div class="card center tick">Answer locked in ✅<br><span class="muted" aria-live="polite">${waitMsg}</span></div>`
-      : `<div class="card"><div class="q">${esc(s.question)}</div>
+      : `<div class="card qcard"><div class="q">${esc(s.question)}</div></div>
+         <div class="card answerbox">
          <input id="ans" placeholder="Your answer" maxlength="60" autocomplete="off" />
          <button id="submit">Submit</button></div>`;
-    if (lead) body += `<div class="card"><p class="muted" aria-live="polite">${s.answeredCount} / ${s.total} answered</p>
-        <div>${s.players.map(p => `<span class="pill">${p.emoji} ${esc(p.name)}${p.answered ? " ✅" : ""}</span>`).join("")}</div></div>
-      <button id="reveal" ${s.answeredCount < 1 ? "disabled" : ""}>Reveal answers</button>
-      <button class="ghost" id="skip">Skip this question</button>`;
+    if (lead) body += `<div class="card">
+        <div class="roster">${s.players.map(p => `<span class="pill ${p.answered ? "done" : "wait"}">${p.emoji} ${esc(p.name)}${p.answered ? " ✓" : ""}</span>`).join("")}</div></div>
+      <div class="btnrow">
+        <button id="reveal" ${s.answeredCount < 1 ? "disabled" : ""}>Reveal answers</button>
+        <button class="ghost" id="skip">Skip this question</button>
+      </div>`;
 
   } else if (s.phase === "review") {
+    const maxCount = Math.max(0, ...s.review.map((b) => b.count)); // current frontrunner = the herd
     const cards = s.review.map((b, i) => {
       const anim = phaseChanged ? "anim-in" : "";                       // cascade only when review first opens
       const delay = phaseChanged ? `style="animation-delay:${i * 45}ms"` : "";
-      const inner = `<b>${esc(b.label)}</b> <span class="muted">×${b.count}</span><br><span class="muted">${b.names.map(esc).join(", ")}</span>`;
-      return lead
-        ? `<div class="grp merge-card ${selected.has(b.id) ? "sel" : ""} ${anim}" data-id="${b.id}" role="button" tabindex="0" aria-pressed="${selected.has(b.id)}" ${delay}>${inner}</div>`
-        : `<div class="grp ${anim}" ${delay}>${inner}</div>`;
+      const herd = b.count >= 2 && b.count === maxCount;
+      const head = b.count >= 2
+        ? `<div class="ghead"><span class="tally">${b.count}</span>${herd ? `<span class="htag">🌿 Herd</span>` : `<span class="muted">matched</span>`}</div>`
+        : "";
+      const rows = b.members.map((m) => `<div class="mrow"><span class="who">${esc(m.emoji)} ${esc(m.name)}</span><span class="atext">${esc(m.text)}</span></div>`).join("");
+      const cls = `grp ${herd ? "herd " : ""}${anim} ${lead ? "merge-card " : ""}${selected.has(b.id) ? "sel" : ""}`;
+      const attrs = lead ? `data-id="${b.id}" role="button" tabindex="0" aria-pressed="${selected.has(b.id)}"` : "";
+      const pick = lead ? `<span class="pick">✓</span>` : "";
+      return `<div class="${cls}" ${attrs} ${delay}>${pick}${head}${rows}</div>`;
     }).join("");
-    body = `<div class="card"><div class="q">${esc(s.question)}</div></div>
-      <div class="card">${cards}</div>`;
+    body = `<div class="card qcard"><div class="q">${esc(s.question)}</div></div>${cards}`;
+    const hint = selected.size === 0 ? "Same answer, different words? Tap them to merge."
+      : selected.size === 1 ? "1 selected — tap another that means the same."
+      : `${selected.size} selected — tap Merge to combine.`;
     body += lead
-      ? `${selected.size >= 2 ? `<button class="merge" id="mergeSel">Merge ${selected.size} answers</button>` : ""}
-         <button id="score">Score this round</button>
-         <button class="ghost" id="regroup">Reset groups</button>`
-      : `<div class="card center muted">Discuss! The host will merge any duplicates, then score.</div>`;
+      ? `<p class="hint">${hint}</p>
+         <div class="btnrow">
+           <button class="merge" id="mergeSel" ${selected.size < 2 ? "disabled" : ""}>${selected.size >= 2 ? `Merge ${selected.size} answers` : "Merge answers"}</button>
+           <button class="ghost" id="regroup">Reset groups</button>
+         </div>
+         <button id="score">Score this round</button>`
+      : `<div class="card center muted">Discuss! The host taps answers that mean the same thing to merge them, then scores.</div>`;
 
   } else if (s.phase === "reveal" || s.phase === "won") {
     // answers were already seen in review; just show the herd answer + scores
